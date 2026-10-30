@@ -1,10 +1,14 @@
-// The drawing surface (replaces PencilKit): pointer-event pen input, a stroke model the
-// fitter consumes directly, an undo stack, and quadratic-midpoint smoothed rendering.
-// Only the first pointer draws; multi-touch is ignored.
+// The drawing surface (replaces PencilKit): pointer-event pen + eraser, a stroke model the
+// fitter consumes directly, a snapshot undo stack, and quadratic-midpoint smoothed
+// rendering. Only the first pointer draws; multi-touch is ignored.
+//
+// The eraser works on the vector strokes: it cuts away the points it passes over and
+// splits a stroke where it was cut, so what is left is still plain polylines for the rig.
 
 import { LG } from './palette.js';
 
 export const PEN_WIDTH = 5;
+const ERASER_R = 12;
 
 export class Drawing {
   constructor(canvas, getCtx, { onChange } = {}) {
@@ -13,9 +17,14 @@ export class Drawing {
     this.onChange = onChange || (() => {});
     /** @type {{points:{x:number,y:number}[], width:number, color:string}[]} */
     this.strokes = [];
+    this.history = [];          // snapshots of `strokes` before each change (undo)
     this.live = null;
     this.pointerId = null;
     this.enabled = false;
+    this.tool = 'pen';          // pen | eraser
+    this.color = LG.ink;
+    this.scale = 1;             // page rescale since the page was cleared (pen width follows)
+    this.eraserAt = null;
 
     canvas.addEventListener('pointerdown', (e) => this.down(e));
     canvas.addEventListener('pointermove', (e) => this.move(e));
@@ -28,21 +37,39 @@ export class Drawing {
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
+  snapshot() {
+    this.history.push(this.strokes.map((s) => ({ ...s, points: s.points.slice() })));
+    if (this.history.length > 200) this.history.shift();
+  }
+
   down(e) {
     if (!this.enabled || this.pointerId !== null) return;     // first pointer only
     this.pointerId = e.pointerId;
     try { this.canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
-    this.live = { points: [this.local(e)], width: PEN_WIDTH, color: LG.ink };
+    const p = this.local(e);
+    if (this.tool === 'eraser') {
+      this.snapshot();
+      this.erasedAny = false;
+      this.lastErase = p;
+      this.eraseAlong(p, p);
+    } else {
+      this.live = { points: [p], width: PEN_WIDTH * this.scale, color: this.color };
+    }
     this.render();
   }
 
   move(e) {
-    if (e.pointerId !== this.pointerId || !this.live) return;
+    if (e.pointerId !== this.pointerId) return;
     const evs = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
     for (const ce of (evs.length ? evs : [e])) {
       const p = this.local(ce);
-      const last = this.live.points[this.live.points.length - 1];
-      if (Math.hypot(p.x - last.x, p.y - last.y) >= 0.75) this.live.points.push(p);
+      if (this.tool === 'eraser') {
+        this.eraseAlong(this.lastErase, p);
+        this.lastErase = p;
+      } else if (this.live) {
+        const last = this.live.points[this.live.points.length - 1];
+        if (Math.hypot(p.x - last.x, p.y - last.y) >= 0.75) this.live.points.push(p);
+      }
     }
     this.render();
   }
@@ -50,8 +77,16 @@ export class Drawing {
   up(e) {
     if (e.pointerId !== this.pointerId) return;
     this.pointerId = null;
+    if (this.tool === 'eraser') {
+      this.eraserAt = null;
+      if (!this.erasedAny) this.history.pop();      // nothing was erased: no undo step
+      this.render();
+      if (this.erasedAny) this.onChange();
+      return;
+    }
     if (this.live) {
       if (e.type === 'pointerup') this.live.points.push(this.local(e));
+      this.snapshot();
       this.strokes.push(this.live);
       this.live = null;
       this.render();
@@ -59,25 +94,64 @@ export class Drawing {
     }
   }
 
-  /// Abandon an in-progress stroke (mode change mid-stroke).
+  /// Erase every stroke point within the eraser radius of the segment a→b, splitting
+  /// strokes where they were cut. Strokes are densified first so a sparse fast line
+  /// still gets cut where the eraser crosses it.
+  eraseAlong(a, b) {
+    this.eraserAt = b;
+    const r = ERASER_R * Math.max(this.scale, 0.5);
+    const near = (p) => distToSegment(p, a, b) <= r + 0.5;
+    const out = [];
+    let changed = false;
+    for (const s of this.strokes) {
+      const pts = densify(s.points, 2);
+      if (!pts.some(near)) { out.push(s); continue; }
+      changed = true;
+      let run = [];
+      for (const p of pts) {
+        if (near(p)) { if (run.length > 1) out.push({ ...s, points: run }); run = []; }
+        else run.push(p);
+      }
+      if (run.length > 1) out.push({ ...s, points: run });
+    }
+    if (changed) { this.strokes = out; this.erasedAny = true; }
+  }
+
+  /// Finish whatever the pointer is doing (mode change mid-stroke).
   cancelLive() {
     this.pointerId = null;
-    if (this.live) { this.strokes.push(this.live); this.live = null; this.render(); this.onChange(); }
+    this.eraserAt = null;
+    if (this.live) { this.snapshot(); this.strokes.push(this.live); this.live = null; this.onChange(); }
+    this.render();
   }
 
   undo() {
-    if (this.strokes.length) { this.strokes.pop(); this.render(); this.onChange(); }
+    if (this.history.length) { this.strokes = this.history.pop(); this.render(); this.onChange(); }
+    else if (this.strokes.length) { this.strokes = []; this.render(); this.onChange(); }
   }
 
   clear() {
     this.strokes = [];
+    this.history = [];
     this.live = null;
     this.pointerId = null;
+    this.eraserAt = null;
+    this.scale = 1;
     this.render();
     this.onChange();
   }
 
-  setStrokes(strokes) { this.strokes = strokes; this.render(); this.onChange(); }
+  setStrokes(strokes) { this.strokes = strokes; this.history = []; this.render(); this.onChange(); }
+
+  /// Uniformly rescale the page content (the page was resized): p' = p·s + (dx, dy).
+  transform(s, dx, dy) {
+    const map = (st) => ({ ...st, width: st.width * s, points: st.points.map((p) => ({ x: p.x * s + dx, y: p.y * s + dy })) });
+    this.strokes = this.strokes.map(map);
+    this.history = this.history.map((snap) => snap.map(map));
+    if (this.live) this.live = map(this.live);
+    this.scale *= s;
+    this.render();
+  }
 
   render() {
     const ctx = this.getCtx();
@@ -87,7 +161,35 @@ export class Drawing {
     ctx.restore();
     for (const s of this.strokes) strokeSmooth(ctx, s);
     if (this.live) strokeSmooth(ctx, this.live);
+    if (this.eraserAt) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(this.eraserAt.x, this.eraserAt.y, ERASER_R * Math.max(this.scale, 0.5), 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(28, 27, 25, 0.35)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
+    }
   }
+}
+
+function densify(pts, step) {
+  if (pts.length < 2) return pts;
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / step));
+    for (let k = 1; k <= n; k++) out.push({ x: a.x + (b.x - a.x) * k / n, y: a.y + (b.y - a.y) * k / n });
+  }
+  return out;
+}
+
+function distToSegment(p, a, b) {
+  const abx = b.x - a.x, aby = b.y - a.y;
+  const len2 = abx * abx + aby * aby;
+  if (len2 < 1e-6) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t = Math.min(Math.max(((p.x - a.x) * abx + (p.y - a.y) * aby) / len2, 0), 1);
+  return Math.hypot(p.x - (a.x + abx * t), p.y - (a.y + aby * t));
 }
 
 /// Quadratic-midpoint smoothing: curve through the midpoints, using each sample as the

@@ -28,24 +28,26 @@ export function drawFrame(ctx, t, rig, routine, originOffset, payload, paper) {
 }
 
 export class Stage {
-  /// `canvas` is the stage <canvas>; `clear()` and `dpr` handling are the caller's
-  /// sizing — the context is expected to be pre-scaled to CSS pixels.
+  /// `canvas` is the stage <canvas>; the context is expected to be pre-scaled to CSS pixels.
   constructor(canvas, getCtx) {
     this.canvas = canvas;
     this.getCtx = getCtx;
     this.raf = 0;
+    this.show = null;      // { rig, routine, payload, paper, t }
   }
 
   /// Play `routine` from t=0; calls `onFinished` once, after drawing the final frame.
   play(rig, routine, payload, paper, onFinished) {
     this.stop();
+    this.show = { rig, routine, payload, paper, t: 0 };
     const start = performance.now();
-    const origin = { x: 0, y: 0 };
     const tick = (now) => {
+      const show = this.show;
+      if (!show) return;
       const elapsed = (now - start) / 1000;
-      const t = Math.min(elapsed, routine.totalDuration);
-      this.render(rig, routine, t, origin, payload, paper);
-      if (elapsed >= routine.totalDuration) {
+      show.t = Math.min(elapsed, show.routine.totalDuration);
+      this.redraw();
+      if (elapsed >= show.routine.totalDuration) {
         this.raf = 0;
         onFinished();
         return;
@@ -55,14 +57,24 @@ export class Stage {
     this.raf = requestAnimationFrame(tick);
   }
 
-  render(rig, routine, t, origin, payload, paper) {
+  /// Swap in a re-laid-out rig + routine (the page was resized). The clock carries on, and
+  /// a held final frame is redrawn once.
+  replace(rig, routine) {
+    if (!this.show) return;
+    this.show.rig = rig;
+    this.show.routine = routine;
+    this.show.t = Math.min(this.show.t, routine.totalDuration);
+    if (!this.raf) this.redraw();
+  }
+
+  redraw() {
     const ctx = this.getCtx();
-    const w = this.canvas.width, h = this.canvas.height;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, w, h);
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.restore();
-    drawFrame(ctx, t, rig, routine, origin, payload, paper);
+    const s = this.show;
+    if (s) drawFrame(ctx, s.t, s.rig, s.routine, { x: 0, y: 0 }, s.payload, s.paper);
   }
 
   stop() {
@@ -72,10 +84,7 @@ export class Stage {
 
   clear() {
     this.stop();
-    const ctx = this.getCtx();
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    ctx.restore();
+    this.show = null;
+    this.redraw();
   }
 }
