@@ -65,6 +65,20 @@ export function nonArticulated(rig) {
   };
 }
 
+/// Is the fit trustworthy enough to ARTICULATE? A drawing that doesn't read clearly as a
+/// little guy moves as one rigid piece instead (the graceful non-articulated path). Stricter
+/// than the fitter's own presence score: it needs a head, BOTH arms and BOTH legs, and no
+/// limb frozen by the plausibility net.
+export function rigIsConfident(rig) {
+  if (!rig.articulated || rig.confidence < 0.6 || rig.demotions.length > 0) return false;
+  const present = new Set();
+  for (const s of rig.strokes) for (const p of s.parts) present.add(p);
+  const has = (...ps) => ps.some((p) => present.has(p));
+  return has(P.head)
+    && has(P.leftArm, P.leftForearm) && has(P.rightArm, P.rightForearm)
+    && has(P.leftLeg, P.leftShin) && has(P.rightLeg, P.rightShin);
+}
+
 /// Representative pen colour of the drawing (the longest stroke's) — used to draw
 /// the conjured props in the same hand the figure was drawn in.
 export function inkColor(rig) {

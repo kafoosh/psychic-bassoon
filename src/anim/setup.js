@@ -54,9 +54,12 @@ export function makeSetup(rig, canvasBounds, contentOffset = { x: 0, y: 0 },
   const hCap = (openRoom - margin) / hReach;
   const vCap = (headroom - margin) / vReach;
   const maxProp = width * 0.80;
-  // No inflated minimum — props are as large as the room allows (down to a small floor so
-  // they're never degenerate), guaranteeing they fit the playfield however small the figure.
-  const propScale = Math.max(40, Math.min(maxProp, hCap, vCap));
+  // Web edition: props are sized to the FIGURE (≈0.8 × its drawn height), so a small little
+  // guy gets a small wand / hat / card and a big one a big one — still capped by the room
+  // left on the open side and the headroom, so they always fit the playfield.
+  // (A floor keeps the revealed card legible on a tiny drawing.)
+  const figureCap = Math.max(rig.skeleton.bbox.height * 0.8, 110);
+  const propScale = Math.max(40, Math.min(maxProp, hCap, vCap, figureCap));
 
   return {
     rig, dropDistance: drop, walkDX, sideSign, propScale,
