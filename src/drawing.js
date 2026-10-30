@@ -193,10 +193,23 @@ function distToSegment(p, a, b) {
 }
 
 /// Quadratic-midpoint smoothing: curve through the midpoints, using each sample as the
-/// control point. A one-point stroke is painted as a dot by the round cap.
+/// control point. A tap (all points within a pixel) is painted as a round dot — the canvas
+/// drops zero-length segments, so a stroked "line" of coincident points would show nothing
+/// while drawing yet appear once the rig renders it.
 export function strokeSmooth(ctx, s) {
   const pts = s.points;
   if (!pts.length) return;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const p of pts) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); }
+  if (maxX - minX < 1 && maxY - minY < 1) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc((minX + maxX) / 2, (minY + maxY) / 2, s.width / 2, 0, Math.PI * 2);
+    ctx.fillStyle = s.color;
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
   ctx.save();
   ctx.strokeStyle = s.color;
   ctx.lineWidth = s.width;
@@ -204,9 +217,7 @@ export function strokeSmooth(ctx, s) {
   ctx.lineJoin = 'round';
   ctx.beginPath();
   ctx.moveTo(pts[0].x, pts[0].y);
-  if (pts.length === 1) {
-    ctx.lineTo(pts[0].x + 0.01, pts[0].y);
-  } else if (pts.length === 2) {
+  if (pts.length === 2) {
     ctx.lineTo(pts[1].x, pts[1].y);
   } else {
     for (let i = 1; i < pts.length - 1; i++) {
