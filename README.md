@@ -5,18 +5,39 @@ path only). Live at **https://kafoosh.github.io/psychic-bassoon/**.
 
 ## Performing
 
-1. **Value:** tap the ruled page (or start a drag on it). The page is a hidden 4×4 grid:
+**Unarmed** (the default), it's an ordinary drawing toy. The page ignores taps, and the
+four bubbles are real tools:
+
+| Bubble | Does |
+|---|---|
+| Palette | opens the colour picker; pick a colour to draw with it |
+| Eraser | rubs out lines |
+| Pencil | draws |
+| Square + pencil | starts a new page ("New canvas created") |
+
+Tap **✓** to put the tools away. Nothing else happens.
+
+**To perform:**
+
+1. **Arm:** hold the page for about 0.65s. The "i" in the bottom-left circle disappears
+   while the hold registers and comes back when you let go. That's your confirmation.
+2. **Value:** tap the ruled page (or start a drag on it). The page is a hidden 4×4 grid:
    rows `A 2 3 4` / `5 6 7 8` / `9 10 J Q`, and the whole bottom row is `K`. The last
    touch before a suit counts.
-2. **Suit:** press one of the four bubbles — left to right **C**lubs, **H**earts,
-   **S**pades, **D**iamonds. This opens the pen.
-3. The spectator draws a little guy. Tap **✓**. Four seconds later he comes to life,
-   performs one of five random routines and reveals the card.
+3. **Suit:** press a bubble. Left to right they are **C**lubs, **H**earts, **S**pades,
+   **D**iamonds. While armed, every bubble opens the colour picker. Hand it over: the
+   spectator picks a colour and draws a little guy.
+4. The spectator taps **✓**. Four seconds later he comes to life, performs one of five
+   random routines and reveals the card.
 
-- If you press a bubble without tapping the page first, ✓ just closes the pen.
-- **Undo:** tap to remove the last stroke; hold for half a second to clear the page.
+- One hold arms one reveal. After a reveal the page is unarmed again; hold again for the
+  next one. A fresh hold also forgets the previous card.
+- If you arm but press a bubble without tapping the page first, ✓ won't perform.
+- **Undo:** tap to step back (this also undoes the eraser); hold for half a second to
+  clear the page.
 - **Long-press the yellow ribbon** to open the menu with **New Page**. Pressing a bubble
   after a reveal also starts a fresh page.
+- The drawing and the reveal scale with the window.
 - For full-screen use, add it to the Home Screen (Share ▸ Add to Home Screen).
 
 The card is kept in memory only. It is never stored, logged, or put in the URL.

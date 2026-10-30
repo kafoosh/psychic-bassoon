@@ -38,6 +38,25 @@
     </div>
   </div>
 
+  <div id="picker-scrim" hidden></div>
+  <div id="picker" role="dialog" aria-label="Colours">
+    <span class="sticker-back"></span>
+    <div id="swatch-grid"></div>
+  </div>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <button id="info" type="button" aria-label="About">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+      <circle cx="12" cy="12" r="9.4"/><g id="info-glyph"><line x1="12" y1="11" x2="12" y2="16.5" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1" fill="currentColor" stroke="none"/></g>
+    </svg>
+  </button>
+  <div id="info-card">
+    Pick a tool and <b>draw a little guy</b>! The <b>palette</b> picks a colour, the
+    <b>eraser</b> rubs things out, the <b>pencil</b> draws, and the last button starts a
+    <b>new page</b>. Tap <b>✓</b> when you're done.
+  </div>
+
   <div id="safe-probe" aria-hidden="true"></div>
   <script type="module" src="src/main.js"></script>
 </body>

@@ -79,6 +79,25 @@ export function inkWidth(rig) {
   return ws.length === 0 ? 4 : Math.max(3, ws.reduce((a, b) => a + b, 0) / ws.length);
 }
 
+/// The same rig, uniformly scaled + translated (p' = p·s + d) — used when the page is
+/// resized. Labels, rigidity and joint angles are unchanged, so nothing re-classifies.
+export function transformRig(rig, s, dx, dy) {
+  const m = (p) => ({ x: p.x * s + dx, y: p.y * s + dy });
+  const k = rig.skeleton;
+  const skeleton = { ...k };
+  for (const key of ['headCenter', 'neck', 'leftShoulder', 'rightShoulder', 'leftElbow', 'rightElbow',
+    'hipCenter', 'leftHip', 'rightHip', 'leftKnee', 'rightKnee', 'feet', 'leftHand', 'rightHand']) {
+    skeleton[key] = m(k[key]);
+  }
+  skeleton.headRadius = k.headRadius * s;
+  skeleton.bbox = rect(k.bbox.x * s + dx, k.bbox.y * s + dy, k.bbox.width * s, k.bbox.height * s);
+  return {
+    ...rig,
+    skeleton,
+    strokes: rig.strokes.map((st) => ({ ...st, width: st.width * s, points: st.points.map(m) })),
+  };
+}
+
 // Hierarchical forward kinematics. Each limb's lower segment bends about its
 // elbow / knee first, then the whole limb swings about the shoulder / hip, then
 // the root transform (squash about feet → lean about hips → translate). Because

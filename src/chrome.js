@@ -89,6 +89,80 @@ function bindPress(el, { onTap, onLongPress, longMs = 500 }) {
   el.addEventListener('click', (e) => { if (e.detail === 0) onTap(); });
 }
 
+// ---------------------------------------------------------------- colour picker
+
+// A single row of bold primaries (Scribbl's brights) plus the pen's black.
+export const SWATCHES = ['#1C1B19', '#FF3B30', '#FFC400', '#2FB344', '#2D7BF6'];
+
+export class ColourPicker {
+  constructor() {
+    this.el = document.getElementById('picker');
+    this.scrim = document.getElementById('picker-scrim');
+    this.grid = document.getElementById('swatch-grid');
+    this.onPick = null;
+    for (const hex of SWATCHES) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'sw';
+      b.dataset.color = hex;
+      b.style.background = hex;
+      b.setAttribute('aria-label', hex);
+      b.addEventListener('click', () => { const cb = this.onPick; this.close(); cb?.(hex); });
+      this.grid.appendChild(b);
+    }
+    // Tapping off the picker dismisses it (that tap does nothing else).
+    this.scrim.addEventListener('pointerdown', (e) => { e.preventDefault(); this.close(); });
+  }
+
+  get isOpen() { return this.el.classList.contains('open'); }
+
+  open(current, top, onPick) {
+    this.onPick = onPick;
+    for (const b of this.grid.children) b.classList.toggle('sel', b.dataset.color.toLowerCase() === String(current).toLowerCase());
+    this.el.style.top = `${top}px`;
+    this.scrim.hidden = false;
+    this.el.classList.add('open');
+  }
+
+  close() {
+    this.onPick = null;
+    this.el.classList.remove('open');
+    this.scrim.hidden = true;
+  }
+}
+
+// ---------------------------------------------------------------- toast
+
+export class Toast {
+  constructor() { this.el = document.getElementById('toast'); this.timer = 0; }
+  show(text, top) {
+    this.el.textContent = text;
+    this.el.style.top = `${top}px`;
+    this.el.classList.add('show');
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.el.classList.remove('show'), 1700);
+  }
+}
+
+// ---------------------------------------------------------------- info button
+
+/// The little "i" in the bottom-left corner (as in Gremlin). Tapping it shows a short
+/// about card. `setGlyph(false)` blanks the "i" inside the circle.
+export class InfoButton {
+  constructor() {
+    this.btn = document.getElementById('info');
+    this.card = document.getElementById('info-card');
+    this.glyph = document.getElementById('info-glyph');
+    this.btn.addEventListener('click', (e) => { e.stopPropagation(); this.card.classList.toggle('show'); });
+    document.addEventListener('pointerdown', (e) => {
+      if (!e.target.closest('#info, #info-card')) this.card.classList.remove('show');
+    }, true);
+  }
+  setGlyph(show) { this.glyph.style.visibility = show ? '' : 'hidden'; }
+}
+
+// ---------------------------------------------------------------- toolbar
+
 export class Toolbar {
   constructor({ onSuit, onUndo, onUndoLong, onDone, onNewPage }) {
     this.el = document.getElementById('toolbar');

@@ -1,10 +1,15 @@
 // The app: a port of AppState + LittleGuyController + CanvasScreen for the Canvas Grid /
 // playing-card path only.
 //
-// The covert flow: a tap (or the touch-down of a drag) on the ruled page picks the VALUE;
-// one of the four "draw" bubbles picks the SUIT (CHaSeD) and opens the pen. The spectator
-// draws a little guy; ✓ out of drawing mode ARMS (only with a secret + strokes), and after a
-// fixed 4s the drawing auto-rigs, comes to life, performs a random routine and reveals the card.
+// UNARMED it is an ordinary drawing toy: the page ignores taps and the four bubbles are real
+// tools — palette (colour picker → pen), eraser, pencil, and new page.
+//
+// ARMED (hold the page ~0.65s; the "i" in the bottom-left blanks while the hold registers
+// and returns on release): a tap (or the touch-down of a drag) on the ruled page picks the
+// VALUE; any bubble picks the SUIT (CHaSeD) and opens the colour picker, and choosing a
+// colour opens the pen. The spectator draws a little guy; ✓ then fires the performance
+// (only with a card + strokes): after a fixed 4s the drawing auto-rigs, comes to life,
+// performs a random routine and reveals the card. That uses up the arm — one reveal per hold.
 //
 // The secret lives in memory only — never persisted, logged, put in the URL, or printed.
 
@@ -12,13 +17,15 @@ import { LG, CARD_PAPER } from './palette.js';
 import { ValueGrid, drawRuling, attachCatcher } from './grid.js';
 import { drawBackdrop } from './backdrop.js';
 import { Drawing } from './drawing.js';
-import { Toolbar, buttonSize } from './chrome.js';
+import { Toolbar, ColourPicker, Toast, InfoButton, buttonSize } from './chrome.js';
 import { fit } from './rig/fitter.js';
+import { transformRig } from './rig/model.js';
 import { makeSetup, makeRoutine, randomSlot, SLOTS } from './anim/setup.js';
 import { Stage } from './anim/stage.js';
 import { FONT_FAMILY } from './reveal.js';
 
 const ARM_DELAY_MS = 4000;
+const HOLD_MS = 650, HOLD_TOL = 14;   // arm gesture: hold time + finger-jitter tolerance (px)
 const params = new URLSearchParams(location.search);
 const forcedRoutine = SLOTS.includes(params.get('routine')) ? params.get('routine') : null;
 
@@ -54,13 +61,15 @@ const appState = {
 
   captureValue(v) { this.capturedValue = Math.min(Math.max(v, 1), 13); },
 
-  /// A suit bubble was pressed — lock in the grid-tapped value with this suit, then CONSUME
-  /// the partial capture so a stale value never leaks into the next trick. No grid tap
-  /// before the suit → NO secret: the bubble is then just a draw button and ✓ won't arm.
+  /// (Armed) a suit bubble was pressed — lock in the grid-tapped value with this suit, then
+  /// CONSUME the partial capture. With no new value the card from this arm is kept, so a
+  /// dismissed colour picker can be reopened without losing it.
   commitCard(suit) {
-    this.reveal = this.capturedValue !== null ? { value: this.capturedValue, suit } : null;
+    if (this.capturedValue !== null) this.reveal = { value: this.capturedValue, suit };
     this.capturedValue = null;
   },
+
+  resetSecret() { this.reveal = null; this.capturedValue = null; },
 };
 
 // ---------------------------------------------------------------- LittleGuyController
@@ -72,6 +81,7 @@ const controller = {
   isSpent: false,
   rig: null,
   routine: null,
+  slot: null,
   armTimer: 0,
   onComeToLife: null,
 
@@ -105,6 +115,7 @@ const controller = {
     this.phase = 'idle';
     this.rig = null;
     this.routine = null;
+    this.slot = null;
     this.isSpent = false;
     stage.clear();
     sync();
@@ -114,14 +125,19 @@ const controller = {
 // ---------------------------------------------------------------- screen
 
 let editorMode = 'idle';    // idle | drawing
+/// The performer's secret arm (the page hold). One reveal per hold.
+let secretArmed = false;
 let grid = new ValueGrid({ x: 0, y: 0, width: 0, height: 0 });
 let insets = { top: 0, bottom: 0 };
 let stageSize = { width: 0, height: 0 };
 
 const stage = new Stage(stageCanvas, () => ctxOf(stageCanvas));
 const drawing = new Drawing(inkCanvas, () => ctxOf(inkCanvas));
+const picker = new ColourPicker();
+const toast = new Toast();
+const info = new InfoButton();
 const toolbar = new Toolbar({
-  onSuit: selectSuit,
+  onSuit: pressBubble,
   onUndo: () => drawing.undo(),
   onUndoLong: clearPage,            // long-press 0.5s: clear the page and reset the controller
   onDone: handleDone,
@@ -132,6 +148,7 @@ controller.onComeToLife = comeToLife;
 function sync() {
   document.body.classList.toggle('drawing', editorMode === 'drawing');
   document.body.classList.toggle('on-stage', controller.isOnStage);
+  document.body.classList.toggle('erasing', editorMode === 'drawing' && drawing.tool === 'eraser');
   drawing.enabled = editorMode === 'drawing';
   toolbar.setDrawing(editorMode === 'drawing');
 }
@@ -153,11 +170,31 @@ function layout() {
   drawBackdrop(pctx, size);
 
   sizeCanvas(inkCanvas);
-  drawing.render();
+  const prev = stageSize;
   stageSize = sizeCanvas(stageCanvas);
-  if (controller.phase === 'done' && controller.rig) {
-    stage.render(controller.rig, controller.routine, controller.routine.totalDuration,
-      { x: 0, y: 0 }, appState.reveal, CARD_PAPER);
+  if (prev.width > 0 && prev.height > 0
+      && (prev.width !== stageSize.width || prev.height !== stageSize.height)) {
+    rescale(prev, stageSize);
+  } else {
+    drawing.render();
+    stage.redraw();
+  }
+}
+
+/// The page changed size: scale the drawing — and a running or held reveal — uniformly
+/// with it, about the page centre, so it keeps its place on the page.
+function rescale(from, to) {
+  const s = Math.min(to.width / from.width, to.height / from.height);
+  const dx = to.width / 2 - (from.width / 2) * s;
+  const dy = to.height / 2 - (from.height / 2) * s;
+  drawing.transform(s, dx, dy);
+  if (controller.rig && controller.routine) {
+    const rig = transformRig(controller.rig, s, dx, dy);
+    const ins = stageInsets();
+    const routine = makeRoutine(controller.slot, makeSetup(rig, stageSize, { x: 0, y: 0 }, ins.top, ins.bottom));
+    controller.rig = rig;
+    controller.routine = routine;
+    stage.replace(rig, routine);
   }
 }
 
@@ -169,10 +206,10 @@ function stageInsets() {
 
 // ---------------------------------------------------------------- actions
 
-/// A grid tap / drag-start: record the value (the last touch before a suit wins). Never
-/// while drawing. Works while idle, armed, performing or done. Returns an undo token.
+/// (Armed only) a grid tap / drag-start: record the value (the last touch before a suit
+/// wins). Never while drawing. Returns an undo token.
 function captureGridValue(point) {
-  if (editorMode === 'drawing' || toolbar.menuOpen) return null;
+  if (!secretArmed || editorMode === 'drawing' || toolbar.menuOpen || picker.isOpen) return null;
   const value = grid.valueAt(point);
   if (value === null) return null;
   const prior = appState.capturedValue;
@@ -181,12 +218,37 @@ function captureGridValue(point) {
   return { prior };
 }
 
-/// A suit bubble: commit the card (or clear it, if no grid value was tapped), then start
-/// drawing. AUTO-FRESH — if a trick is pending, performing, or finished, the page is
-/// cleared first so this is a brand-new performance; strokes on an idle page are kept.
-function selectSuit(suit) {
-  appState.commitCard(suit);
+/// A bubble. AUTO-FRESH first — if a reveal is pending, performing, or finished, the page is
+/// cleared so this is a brand-new page; strokes on an idle page are kept.
+///   armed:   commit the suit (CHaSeD) and open the colour picker → pen.
+///   unarmed: ♣ colour picker → pen · ♥ eraser · ♠ pen · ♦ new page.
+function pressBubble(suit) {
   if (controller.phase !== 'idle') clearPage();
+  if (secretArmed) {
+    appState.commitCard(suit);
+    openPicker();
+    return;
+  }
+  switch (suit) {
+    case 'clubs': openPicker(); break;
+    case 'hearts': startDrawing('eraser'); break;
+    case 'spades': startDrawing('pen'); break;
+    case 'diamonds':
+      clearPage();
+      toast.show('New canvas created', toolbar.bottom() + 8);
+      break;
+  }
+}
+
+function openPicker() {
+  picker.open(drawing.color, toolbar.bottom() + 6, (colour) => {
+    drawing.color = colour;
+    startDrawing('pen');
+  });
+}
+
+function startDrawing(tool) {
+  drawing.tool = tool;
   editorMode = 'drawing';
   sync();
 }
@@ -197,16 +259,23 @@ function clearPage() {
   drawing.clear();
 }
 
-/// ✓ out of DRAWING mode with a drawing present is the covert arm — ONLY with a committed
-/// secret. Otherwise it just closes the pen like an ordinary drawing app.
+/// ✓ out of DRAWING mode closes the tools. It fires the performance ONLY when the page was
+/// armed by the hold and a card was committed (and there is a drawing) — that uses up the arm.
 function handleDone() {
   const wasDrawing = editorMode === 'drawing';
   drawing.cancelLive();
   editorMode = 'idle';
   sync();
-  if (wasDrawing && appState.reveal !== null && drawing.strokes.length > 0 && controller.canArm) {
+  if (wasDrawing && secretArmed && appState.reveal !== null && drawing.strokes.length > 0 && controller.canArm) {
+    secretArmed = false;
     controller.arm(ARM_DELAY_MS);
   }
+}
+
+/// The performer's hold on the page: arms one reveal. A fresh arm starts a fresh card.
+function armSecret() {
+  if (!secretArmed) appState.resetSecret();
+  secretArmed = true;
 }
 
 let fontReady = null;
@@ -229,9 +298,11 @@ async function comeToLife() {
   const rig = fit(strokes);
   const ins = stageInsets();
   const setup = makeSetup(rig, stageSize, { x: 0, y: 0 }, ins.top, ins.bottom);
-  const routine = makeRoutine(forcedRoutine || randomSlot(), setup);
+  const slot = forcedRoutine || randomSlot();
+  const routine = makeRoutine(slot, setup);
   controller.rig = rig;
   controller.routine = routine;
+  controller.slot = slot;
   sync();                                             // hide the static strokes
   stage.play(rig, routine, appState.reveal, CARD_PAPER, () => controller.finish());
 }
@@ -242,6 +313,28 @@ attachCatcher(catcher, {
   onValuePoint: captureGridValue,
   onCancel: (token) => { appState.capturedValue = token.prior; },
 });
+
+// The arm gesture: hold the page. The "i" glyph blanks the moment the hold registers (the
+// performer's confirmation) and comes back as soon as the finger lifts.
+{
+  let timer = 0, start = null, downs = 0;
+  const cancel = () => { clearTimeout(timer); timer = 0; };
+  catcher.addEventListener('pointerdown', (e) => {
+    downs += 1;
+    cancel();
+    info.setGlyph(true);
+    if (downs > 1 || editorMode === 'drawing' || toolbar.menuOpen || picker.isOpen) return;
+    start = { x: e.clientX, y: e.clientY };
+    timer = setTimeout(() => { timer = 0; armSecret(); info.setGlyph(false); }, HOLD_MS);
+  });
+  catcher.addEventListener('pointermove', (e) => {
+    if (timer && start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > HOLD_TOL) cancel();
+  });
+  const release = () => { downs = Math.max(0, downs - 1); cancel(); if (downs === 0) info.setGlyph(true); };
+  catcher.addEventListener('pointerup', release);
+  catcher.addEventListener('pointercancel', release);
+  window.addEventListener('blur', () => { downs = 0; cancel(); info.setGlyph(true); });
+}
 
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 document.addEventListener('gesturestart', (e) => e.preventDefault());   // iOS pinch

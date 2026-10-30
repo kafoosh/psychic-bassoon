@@ -168,40 +168,40 @@ const SUIT_SHAPES = {
 };
 
 /// One suit symbol at a nominal glyph `size` (the Swift version drew ♣♥♦♠ at font size
-/// `size`; the drawn symbol is sized to match a glyph's visible height). The outline is
-/// jittered with det() like `SketchInk.sketch`, filled, then re-traced with a second
-/// wobble so the edge reads as pen-drawn rather than typeset.
+/// `size`; the drawn symbol is sized to match a glyph's visible height). The outline gets
+/// a light det() wobble and is traced with midpoint curves, so the edge reads as a smooth
+/// pen line rather than typeset — without looking shaky.
 export function drawSuit(ctx, suit, center, size, color, seed) {
   const h = size * 0.66;
   const shapes = SUIT_SHAPES[suit];
   if (!shapes) return;
-  const amp = 0.035;
+  const amp = 0.012;
   const rot = det(0, seed + 7.1) * 0.14;
   ctx.save();
   ctx.translate(center.x + det(0, seed) * size * 0.05, center.y + det(0, seed + 3.3) * size * 0.06);
   ctx.rotate(rot);
   ctx.scale(h, h);
-  const trace = (s) => {
-    ctx.beginPath();
-    shapes.forEach((pts, si) => {
-      pts.forEach((p, i) => {
-        const k = i + si * 61;
-        const x = p.x + det(k, seed + s) * amp, y = p.y + det(k, seed + s + 9.7) * amp;
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      });
-      ctx.closePath();
-    });
-  };
+  ctx.beginPath();
+  shapes.forEach((pts, si) => {
+    const q = pts.map((p, i) => ({
+      x: p.x + det(i + si * 61, seed) * amp,
+      y: p.y + det(i + si * 61, seed + 9.7) * amp,
+    }));
+    const n = q.length;
+    const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+    const m0 = mid(q[n - 1], q[0]);
+    ctx.moveTo(m0.x, m0.y);
+    for (let i = 0; i < n; i++) {
+      const m = mid(q[i], q[(i + 1) % n]);
+      ctx.quadraticCurveTo(q[i].x, q[i].y, m.x, m.y);
+    }
+    ctx.closePath();
+  });
   ctx.fillStyle = color;
   ctx.strokeStyle = color;
   ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-  trace(0);
+  ctx.lineWidth = 0.04;
   ctx.fill('nonzero');
-  ctx.lineWidth = 0.05;
-  ctx.stroke();
-  trace(4.1);
-  ctx.lineWidth = 0.035;
   ctx.stroke();
   ctx.restore();
 }
