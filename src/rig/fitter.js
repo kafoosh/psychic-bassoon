@@ -911,7 +911,11 @@ export function fit(inputStrokes) {
       if (p === P.rightArm || p === P.rightForearm) rightHandPart = P.rightForearm;
     }
   }
-  return makeRig(strokes, skeleton, confidence, articulated, demotions, leftHandPart, rightHandPart);
+  const rig = makeRig(strokes, skeleton, confidence, articulated, demotions, leftHandPart, rightHandPart);
+  // (web) read by the confidence gate: a head is a LOOP (closed or a 2D open outline) —
+  // never a plain line (a sun's ray, a roof edge) that merely scored best in the top band.
+  rig.headFound = headDet !== null && (raw[headIndex].closed || raw[headIndex].fat);
+  return rig;
 }
 
 // MARK: - Run classification
