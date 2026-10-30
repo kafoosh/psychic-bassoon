@@ -108,22 +108,40 @@ test('FK keeps joints connected (rest pose is identity)', () => {
   });
 });
 
-test('confidence gate: clear little guys articulate, other drawings move as one piece', () => {
-  let confident = 0;
-  const specs = F.cleanSpecs();
-  for (const spec of specs) if (rigIsConfident(fit(F.build(spec).strokes))) confident += 1;
-  assert.ok(confident / specs.length >= 0.98, `only ${confident}/${specs.length} clean figures articulate`);
+test('confidence gate: little guys articulate, other drawings move as one piece', () => {
+  for (const [name, specs, floor] of [['clean', F.cleanSpecs(), 0.99], ['proportions', F.proportionSpecs(), 0.9]]) {
+    let n = 0;
+    for (const spec of specs) if (rigIsConfident(stabilizeSeams(fit(F.build(spec).strokes)))) n += 1;
+    assert.ok(n / specs.length >= floor, `only ${n}/${specs.length} ${name} figures articulate`);
+  }
   for (const f of F.userFixtures()) assert.ok(rigIsConfident(fit(f.strokes)), `${f.name} should articulate`);
 
   const ln = (a, b, n = 14) => Array.from({ length: n + 1 }, (_, i) => ({ x: a.x + (b.x - a.x) * i / n, y: a.y + (b.y - a.y) * i / n }));
+  const poly = (ps) => ps.slice(1).flatMap((p, i) => ln(ps[i], p, 10));
+  const circ = (cx, cy, r, n = 32) => Array.from({ length: n + 1 }, (_, i) => ({ x: cx + r * Math.cos(i / n * 2 * Math.PI), y: cy + r * Math.sin(i / n * 2 * Math.PI) }));
   const mk = (points) => ({ points, width: 5, color: '#000' });
   const P = (x, y) => ({ x, y });
-  const house = [ln(P(100, 400), P(300, 400)), ln(P(300, 400), P(300, 600)), ln(P(300, 600), P(100, 600)),
-    ln(P(100, 600), P(100, 400)), ln(P(100, 400), P(200, 300)), ln(P(200, 300), P(300, 400))].map(mk);
-  const squiggle = [mk(Array.from({ length: 80 }, (_, i) => P(100 + i * 3, 400 + Math.sin(i / 4) * 60)))];
-  const oneLegged = F.build(F.makeSpec({ head: 'circle', torso: 'spineLine', arm: 'lineDown', leg: 'lineStraight', oneLeg: true, seed: 5 })).strokes;
-  for (const [name, strokes] of [['house', house], ['squiggle', squiggle], ['one-legged', oneLegged]]) {
-    assert.equal(rigIsConfident(fit(strokes)), false, `${name} should move as one piece`);
+
+  // A big-headed figure whose arms are ONE stroke with a short left stub (the reported
+  // drawing), with eye dots and a smile — it must articulate.
+  const yellow = [circ(326, 137, 80, 40), [P(325, 136)], [P(359, 122)], poly([P(301, 147), P(325, 170), P(350, 176), P(372, 164)]),
+    poly([P(327, 215), P(315, 295), P(295, 380), P(280, 450)]), ln(P(315, 295), P(360, 450)),
+    poly([P(300, 259), P(370, 256), P(455, 251), P(457, 262)])].map(mk);
+  assert.ok(rigIsConfident(stabilizeSeams(fit(yellow))), 'big-head figure with a stub arm should articulate');
+
+  const junk = {
+    house: [ln(P(100, 400), P(300, 400)), ln(P(300, 400), P(300, 600)), ln(P(300, 600), P(100, 600)), ln(P(100, 600), P(100, 400)),
+      ln(P(100, 400), P(200, 300)), ln(P(200, 300), P(300, 400))],
+    squiggle: [Array.from({ length: 80 }, (_, i) => P(100 + i * 3, 400 + Math.sin(i / 4) * 60))],
+    flower: [circ(200, 300, 30), ln(P(200, 330), P(205, 600)), ln(P(203, 450), P(160, 420)), ln(P(203, 500), P(250, 470))],
+    sun: [circ(200, 400, 60), ...Array.from({ length: 8 }, (_, k) => { const a = k / 8 * 2 * Math.PI;
+      return ln(P(200 + 75 * Math.cos(a), 400 + 75 * Math.sin(a)), P(200 + 120 * Math.cos(a), 400 + 120 * Math.sin(a))); })],
+    car: [ln(P(80, 450), P(320, 450)), ln(P(320, 450), P(320, 520)), ln(P(320, 520), P(80, 520)), ln(P(80, 520), P(80, 450)),
+      ln(P(130, 450), P(160, 400)), ln(P(160, 400), P(250, 400)), ln(P(250, 400), P(280, 450)), circ(130, 525, 25), circ(270, 525, 25)],
+    oneLegged: F.build(F.makeSpec({ head: 'circle', torso: 'spineLine', arm: 'lineDown', leg: 'lineStraight', oneLeg: true, seed: 5 })).strokes.map((s) => s.points),
+  };
+  for (const [name, strokes] of Object.entries(junk)) {
+    assert.equal(rigIsConfident(stabilizeSeams(fit(strokes.map(mk)))), false, `${name} should move as one piece`);
   }
 });
 

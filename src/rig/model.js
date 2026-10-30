@@ -65,18 +65,28 @@ export function nonArticulated(rig) {
   };
 }
 
-/// Is the fit trustworthy enough to ARTICULATE? A drawing that doesn't read clearly as a
-/// little guy moves as one rigid piece instead (the graceful non-articulated path). Stricter
-/// than the fitter's own presence score: it needs a head, BOTH arms and BOTH legs, and no
-/// limb frozen by the plausibility net.
+/// Is the fit trustworthy enough to ARTICULATE? A drawing that doesn't read as a little guy
+/// moves as one rigid piece instead (the graceful non-articulated path). It must look like a
+/// standing figure: a real (loop) head, at least one arm, two legs — two leg strokes, or the
+/// two branches of one ∧ — and not much wider than tall. Sides are NOT required: a short arm
+/// folded into the other, or both legs on one side, still animates fine; and a limb frozen by
+/// the plausibility net already rides the body safely. Only a whole-figure fallback fails.
 export function rigIsConfident(rig) {
-  if (!rig.articulated || rig.confidence < 0.6 || rig.demotions.length > 0) return false;
-  const present = new Set();
-  for (const s of rig.strokes) for (const p of s.parts) present.add(p);
-  const has = (...ps) => ps.some((p) => present.has(p));
-  return has(P.head)
-    && has(P.leftArm, P.leftForearm) && has(P.rightArm, P.rightForearm)
-    && has(P.leftLeg, P.leftShin) && has(P.rightLeg, P.rightShin);
+  if (!rig.articulated || !rig.headFound) return false;
+  if (rig.demotions.some((d) => d.side === 'all')) return false;
+  const b = rig.skeleton.bbox;
+  if (b.height < b.width * 0.8) return false;
+  let arm = false, legRuns = 0;
+  for (const s of rig.strokes) {
+    let prev = null;
+    for (const p of s.parts) {
+      if (p === P.leftArm || p === P.rightArm || p === P.leftForearm || p === P.rightForearm) arm = true;
+      const leg = p === P.leftLeg || p === P.rightLeg ? p : null;
+      if (leg && leg !== prev) legRuns += 1;
+      prev = leg;
+    }
+  }
+  return arm && legRuns >= 2;
 }
 
 /// Representative pen colour of the drawing (the longest stroke's) — used to draw
