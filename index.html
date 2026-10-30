@@ -4,6 +4,33 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>A Little Guy</title>
+  <script>
+    // URL force: "/7D" or "?=7D" (anything may follow the card: "/7D90382sd"). Read the card,
+    // then wipe it from the address bar BEFORE first paint so only the plain address shows.
+    // Values A 2–10 J Q K, suits C H S D, either case. Handed to src/main.js via __lgForce.
+    // The "/7D" form works because the deploy also publishes this page as 404.html, which
+    // GitHub Pages serves for any path without a file.
+    (function () {
+      var card = /^(10|[2-9]|[ajqk])([chsd])/i;
+      var m = /^\?=?(10|[2-9]|[ajqk])([chsd])/i.exec(location.search), path = location.pathname;
+      if (!m) {
+        var slash = path.replace(/\/$/, '').lastIndexOf('/');
+        m = card.exec(decodeURIComponent(path.slice(slash + 1).replace(/\/$/, '')));
+        if (m) path = path.slice(0, slash + 1);
+      }
+      if (!m) return;
+      var v = m[1].toUpperCase();
+      var value = v === 'A' ? 1 : v === 'J' ? 11 : v === 'Q' ? 12 : v === 'K' ? 13 : parseInt(v, 10);
+      var suit = { C: 'clubs', H: 'hearts', S: 'spades', D: 'diamonds' }[m[2].toUpperCase()];
+      window.__lgForce = { value: value, suit: suit };
+      var rest = location.search;
+      if (/^\?=?(10|[2-9]|[ajqk])[chsd]/i.test(rest)) {
+        rest = rest.slice(1).split('&').slice(1).join('&');
+        rest = rest ? '?' + rest : '';
+      }
+      try { history.replaceState(null, '', path + rest + location.hash); } catch (e) {}
+    })();
+  </script>
   <meta name="description" content="Draw a little guy.">
   <meta name="theme-color" content="#FBF6EA">
   <meta name="color-scheme" content="light">

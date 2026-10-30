@@ -1,7 +1,7 @@
 # A Little Guy — web edition
 
 A static web version of the A Little Guy drawing trick (the Canvas Grid / playing-card
-path only). Live at **https://kafoosh.github.io/psychic-bassoon/**.
+path only). Live at **https://draw.oddpaq.com/**.
 
 ## Performing
 
@@ -42,7 +42,20 @@ Tap **✓** or **Back** to put the tools away. Nothing else happens.
 - The drawing and the reveal scale with the window.
 - For full-screen use, add it to the Home Screen (Share ▸ Add to Home Screen).
 
-The card is kept in memory only. It is never stored, logged, or put in the URL.
+**URL force (no input on the page):** put the card right after the address, for example
+`draw.oddpaq.com/7D` for the 7♦ (`draw.oddpaq.com/?=7D` also works). Anything may follow
+the card (`/7D90382sd` works the same), so the link doesn't look like a card. Values are
+`A 2–10 J Q K` and suits `C H S D`, in either case. The code is wiped from the address bar
+before the page appears, so only `draw.oddpaq.com` shows. (The short form works because
+the deploy also publishes the app as `404.html`, which GitHub Pages serves for any unknown
+path.)
+
+With a URL card loaded, the bubbles stay ordinary tools, and the next ✓ with a drawing
+performs that card after the usual delay. After that one reveal, the page is back to the
+long-press method. A long press before then replaces the URL card.
+
+The card is kept in memory only. It is never stored or logged, and a URL card is wiped from
+the address bar straight away.
 
 ## Development
 
