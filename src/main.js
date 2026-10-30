@@ -12,7 +12,12 @@
 // the drawing auto-rigs (or, if it can't be rigged confidently, moves as one piece), comes to
 // life, performs a random routine and reveals the card. That uses up the arm.
 //
-// The secret lives in memory only — never persisted, logged, put in the URL, or printed.
+// URL FORCE: opening the page as "…/?=7D" (any junk may follow: "?=7D90382sd") loads the 7♦
+// and the address bar is wiped before first paint (inline script in index.html). The page then
+// skips the input method: the bubbles stay ordinary tools and the next ✓ with a drawing
+// performs the forced card. After that one reveal it is back to the long-press method.
+//
+// The secret lives in memory only — never persisted, logged or printed.
 
 import { LG, CARD_PAPER } from './palette.js';
 import { ValueGrid, drawRuling } from './grid.js';
@@ -131,6 +136,9 @@ const controller = {
 let editorMode = 'idle';    // idle | drawing
 /// The performer's secret arm (the page hold). One reveal per hold.
 let secretArmed = false;
+/// A card forced from the URL (?=7D…), performed by the next ✓; null once used.
+let forcedCard = window.__lgForce || null;
+delete window.__lgForce;
 let grid = new ValueGrid({ x: 0, y: 0, width: 0, height: 0 });
 let insets = { top: 0, bottom: 0 };
 let stageSize = { width: 0, height: 0 };
@@ -265,14 +273,21 @@ function handleDone() {
   drawing.cancelLive();
   editorMode = 'idle';
   sync();
-  if (wasDrawing && secretArmed && appState.reveal !== null && drawing.strokes.length > 0 && controller.canArm) {
+  if (!wasDrawing || drawing.strokes.length === 0 || !controller.canArm) return;
+  if (secretArmed && appState.reveal !== null) {
     secretArmed = false;
+    controller.arm(ARM_DELAY_MS);
+  } else if (!secretArmed && forcedCard) {
+    // URL force: no input needed — perform the forced card, once.
+    appState.reveal = forcedCard;
+    forcedCard = null;
     controller.arm(ARM_DELAY_MS);
   }
 }
 
 /// The performer's long press on a cell: picks the value AND arms one reveal.
 function armSecret(point) {
+  forcedCard = null;          // the performer took over: the long press replaces a URL force
   appState.arm(grid.valueAt(point));
   secretArmed = true;
   navigator.vibrate?.(8);
