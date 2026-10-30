@@ -37,6 +37,8 @@ jobs:
         run: |
           mkdir _site
           cp -r index.html styles.css manifest.webmanifest icon.png fonts src _site/
+          # Any unknown path (e.g. /7D, the URL force) gets the app too.
+          cp index.html _site/404.html
           touch _site/.nojekyll
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
