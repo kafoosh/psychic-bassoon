@@ -44,7 +44,9 @@ Tap **✓** or **Back** to put the tools away. Nothing else happens.
 
 **URL force (no input on the page):** put the card right after the address, for example
 `draw.oddpaq.com/7D` for the 7♦ (`draw.oddpaq.com/?=7D` also works). Anything may follow
-the card (`/7D90382sd` works the same), so the link doesn't look like a card. Values are
+the card (`/7D90382sd` or `/7D9$x/k2#q` work the same), so the link doesn't look like a
+card. The only characters to avoid are `%` and `;`, which GitHub refuses before the page
+loads. Values are
 `A 2–10 J Q K` and suits `C H S D`, in either case. The code is wiped from the address bar
 before the page appears, so only `draw.oddpaq.com` shows. (The short form works because
 the deploy also publishes the app as `404.html`, which GitHub Pages serves for any unknown
