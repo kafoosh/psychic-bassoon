@@ -348,6 +348,36 @@ export function cleanSpecs() {
   return specs;
 }
 
+/// Outlier stressors — belts/tails at the hip, hats/raised fists, open/hourglass torso
+/// outlines, mono-tube legs, two-stroke limbs, cross-body arms, thick pens, one-legged figures.
+export function adversarialSpecs() {
+  const torsos = coreTorsos.concat(['openTaperOutline', 'hourglass']);
+  const arms = coreArms.concat(['handOnHip', 'raisedFist', 'twoStroke', 'crossBody']);
+  const legs = coreLegs.concat(['monoTube', 'twoStroke']);
+  const specs = [];
+  const rng = new LCG(0xBADD1E);
+  let sid = 100000;
+  for (let k = 0; k < 400; k++) {
+    const deco = {};
+    if (rng.bool(0.4)) deco.face = true;
+    if (rng.bool(0.3)) deco.belt = true;
+    if (rng.bool(0.25)) deco.tail = true;
+    if (rng.bool(0.15)) deco.hat = true;
+    if (rng.bool(0.2)) deco.hands = true;
+    if (rng.bool(0.2)) deco.feet = true;
+    if (rng.bool(0.2)) deco.neck = true;
+    const headV = rng.pick(coreHeads), torsoV = rng.pick(torsos), armV = rng.pick(arms), legV = rng.pick(legs);
+    const lean = rng.range(-0.15, 0.15);
+    const scale = rng.range(0.8, 1.35);
+    const wobble = rng.bool(0.5) ? rng.range(0, 3.5) : 0;
+    const spec = makeSpec({ head: headV, torso: torsoV, arm: armV, leg: legV, deco, lean, scale, wobble, seed: sid });
+    if (rng.bool(0.25)) spec.penScale = 2.5;
+    if (rng.bool(0.08)) spec.oneLeg = true;
+    specs.push(spec); sid += 1;
+  }
+  return specs;
+}
+
 export function proportionSpecs() {
   const specs = [];
   const rng = new LCG(0x5151A7);
@@ -568,6 +598,30 @@ export function explosionRatio(rig, slot, bounds = { width: 390, height: 844 },
       });
     }
     worst = Math.max(worst, Math.max(hx - lx, hy - ly) / origExtent);
+  }
+  return worst;
+}
+
+/// Worst SEAM stretch over every routine, ÷ body length: adjacent points of one stroke that
+/// ride different parts and get pulled apart when a limb swings (e.g. a hand drawn on the
+/// hip dragged out of the crotch by a wave).
+export function seamStretch(rig, bounds = { width: 390, height: 844 }) {
+  const k = rig.skeleton;
+  const bodyLen = Math.max(k.bbox.maxY - k.neck.y, 1);
+  const seams = [];
+  rig.strokes.forEach((s) => { for (let i = 0; i + 1 < s.points.length; i++) if (s.parts[i] !== s.parts[i + 1]) seams.push([s, i]); });
+  if (!seams.length) return 0;
+  let worst = 0;
+  for (const slot of SLOTS) {
+    const routine = makeRoutine(slot, makeSetup(rig, bounds, { x: 0, y: 0 }, EXPLOSION_INSETS.top, 44));
+    for (let t = 0; t <= routine.totalDuration; t += 0.25) {
+      const pose = routine.pose(t);
+      for (const [s, i] of seams) {
+        const a = worldPoint(rig, s.points[i], s.parts[i], pose), b = worldPoint(rig, s.points[i + 1], s.parts[i + 1], pose);
+        const d = Math.hypot(a.x - b.x, a.y - b.y) - Math.hypot(s.points[i].x - s.points[i + 1].x, s.points[i].y - s.points[i + 1].y);
+        worst = Math.max(worst, d / bodyLen);
+      }
+    }
   }
   return worst;
 }
