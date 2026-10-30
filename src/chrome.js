@@ -30,7 +30,7 @@ export const ICONS = {
   diamonds: () => SVG(
     '<path d="M11 4.2H6.2a2 2 0 00-2 2v11.6a2 2 0 002 2h11.6a2 2 0 002-2V13"/>'
     + '<path d="M18.2 2.9l2.9 2.9-8.9 8.9-3.7.8.8-3.7z"/>'),
-  undo: () => SVG('<path d="M9 14.5L4.3 9.8 9 5.1"/><path d="M4.6 9.8h10a5.2 5.2 0 010 10.4h-3.4"/>', 'stroke-width="2.6"'),
+  back: () => SVG('<path d="M19.5 12H5"/><path d="M11 5.5L4.5 12l6.5 6.5"/>', 'stroke-width="2.7"'),
   done: () => SVG('<path d="M5 12.6l4.6 4.6L19.2 7.2"/>', 'stroke-width="3.1"'),
   newPage: () => SVG('<path d="M11 4.2H6.2a2 2 0 00-2 2v11.6a2 2 0 002 2h11.6a2 2 0 002-2V13"/><path d="M18.2 2.9l2.9 2.9-8.9 8.9-3.7.8.8-3.7z"/>', 'stroke-width="2"'),
 };
@@ -164,7 +164,7 @@ export class InfoButton {
 // ---------------------------------------------------------------- toolbar
 
 export class Toolbar {
-  constructor({ onSuit, onUndo, onUndoLong, onDone, onNewPage }) {
+  constructor({ onSuit, onBack, onDone, onNewPage }) {
     this.el = document.getElementById('toolbar');
     this.suitRow = document.getElementById('suit-row');
     this.drawRow = document.getElementById('draw-row');
@@ -179,11 +179,11 @@ export class Toolbar {
       this.suitRow.appendChild(b);
     }
 
-    const undo = sticker(ICONS.undo(), LG.purple, 'Undo');
-    bindPress(undo, { onTap: onUndo, onLongPress: onUndoLong });
+    const back = sticker(ICONS.back(), LG.purple, 'Back');
+    bindPress(back, { onTap: onBack });
     const done = sticker(ICONS.done(), LG.orange, 'Done');
     bindPress(done, { onTap: onDone });
-    this.drawRow.append(undo, done);
+    this.drawRow.append(back, done);
 
     // Ribbon: a LONG-PRESS (~500ms) opens the performer menu. A plain tap does nothing.
     let lp = 0, lpStart = null;
@@ -225,7 +225,7 @@ export class Toolbar {
     this.scrim.hidden = true;
   }
 
-  /// Idle: the suit row + ribbon. Drawing: Undo · Done, the ribbon hidden (not removed) so
+  /// Idle: the suit row + ribbon. Drawing: Back · Done, the ribbon hidden (not removed) so
   /// the measured toolbar height never changes.
   setDrawing(drawing) {
     this.suitRow.hidden = drawing;

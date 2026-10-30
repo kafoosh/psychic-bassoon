@@ -4,22 +4,24 @@
 // UNARMED it is an ordinary drawing toy: the page ignores taps and the four bubbles are real
 // tools — palette (colour picker → pen), eraser, pencil, and new page.
 //
-// ARMED (hold the page ~0.65s; the "i" in the bottom-left blanks while the hold registers
-// and returns on release): a tap (or the touch-down of a drag) on the ruled page picks the
-// VALUE; any bubble picks the SUIT (CHaSeD) and opens the colour picker, and choosing a
-// colour opens the pen. The spectator draws a little guy; ✓ then fires the performance
-// (only with a card + strokes): after a fixed 4s the drawing auto-rigs, comes to life,
-// performs a random routine and reveals the card. That uses up the arm — one reveal per hold.
+// ARMED: a long press (~0.65s) on a cell of the ruled page picks the VALUE and arms one
+// reveal in the same move — the "i" in the bottom-left blanks while the hold registers and
+// returns on release. Ordinary taps never pick a value; a new long press replaces it. Then
+// any bubble picks the SUIT (CHaSeD) and opens the colour picker, and choosing a colour opens
+// the pen. The spectator draws a little guy; ✓ then fires the performance: after a fixed 4s
+// the drawing auto-rigs (or, if it can't be rigged confidently, moves as one piece), comes to
+// life, performs a random routine and reveals the card. That uses up the arm.
 //
 // The secret lives in memory only — never persisted, logged, put in the URL, or printed.
 
 import { LG, CARD_PAPER } from './palette.js';
-import { ValueGrid, drawRuling, attachCatcher } from './grid.js';
+import { ValueGrid, drawRuling } from './grid.js';
 import { drawBackdrop } from './backdrop.js';
 import { Drawing } from './drawing.js';
 import { Toolbar, ColourPicker, Toast, InfoButton, buttonSize } from './chrome.js';
 import { fit } from './rig/fitter.js';
-import { transformRig } from './rig/model.js';
+import { stabilizeSeams } from './rig/seams.js';
+import { transformRig, nonArticulated, rigIsConfident } from './rig/model.js';
 import { makeSetup, makeRoutine, randomSlot, SLOTS } from './anim/setup.js';
 import { Stage } from './anim/stage.js';
 import { FONT_FAMILY } from './reveal.js';
@@ -56,20 +58,22 @@ function safeInsets() {
 const appState = {
   /** The committed secret the little guy will reveal: {value, suit} | null. */
   reveal: null,
-  /** Partial capture: the value from a grid tap, consumed when a suit bubble is pressed. */
-  capturedValue: null,
+  /** The value picked by the arming long press (null if the hold missed the grid). */
+  armedValue: null,
 
-  captureValue(v) { this.capturedValue = Math.min(Math.max(v, 1), 13); },
-
-  /// (Armed) a suit bubble was pressed — lock in the grid-tapped value with this suit, then
-  /// CONSUME the partial capture. With no new value the card from this arm is kept, so a
-  /// dismissed colour picker can be reopened without losing it.
-  commitCard(suit) {
-    if (this.capturedValue !== null) this.reveal = { value: this.capturedValue, suit };
-    this.capturedValue = null;
+  /// The arming long press: a new value, and any previous card is forgotten.
+  arm(value) {
+    this.armedValue = value === null ? null : Math.min(Math.max(value, 1), 13);
+    this.reveal = null;
   },
 
-  resetSecret() { this.reveal = null; this.capturedValue = null; },
+  /// (Armed) a suit bubble was pressed: the card is the armed value in this suit. The last
+  /// bubble before the drawing wins. No value → no card, and ✓ won't perform.
+  commitCard(suit) {
+    this.reveal = this.armedValue !== null ? { value: this.armedValue, suit } : null;
+  },
+
+  resetSecret() { this.reveal = null; this.armedValue = null; },
 };
 
 // ---------------------------------------------------------------- LittleGuyController
@@ -138,8 +142,7 @@ const toast = new Toast();
 const info = new InfoButton();
 const toolbar = new Toolbar({
   onSuit: pressBubble,
-  onUndo: () => drawing.undo(),
-  onUndoLong: clearPage,            // long-press 0.5s: clear the page and reset the controller
+  onBack: goBack,
   onDone: handleDone,
   onNewPage: clearPage,
 });
@@ -206,18 +209,6 @@ function stageInsets() {
 
 // ---------------------------------------------------------------- actions
 
-/// (Armed only) a grid tap / drag-start: record the value (the last touch before a suit
-/// wins). Never while drawing. Returns an undo token.
-function captureGridValue(point) {
-  if (!secretArmed || editorMode === 'drawing' || toolbar.menuOpen || picker.isOpen) return null;
-  const value = grid.valueAt(point);
-  if (value === null) return null;
-  const prior = appState.capturedValue;
-  appState.captureValue(value);
-  navigator.vibrate?.(8);
-  return { prior };
-}
-
 /// A bubble. AUTO-FRESH first — if a reveal is pending, performing, or finished, the page is
 /// cleared so this is a brand-new page; strokes on an idle page are kept.
 ///   armed:   commit the suit (CHaSeD) and open the colour picker → pen.
@@ -259,6 +250,14 @@ function clearPage() {
   drawing.clear();
 }
 
+/// Back: leave the pen/eraser and return to the main page. The drawing stays; it never
+/// performs.
+function goBack() {
+  drawing.cancelLive();
+  editorMode = 'idle';
+  sync();
+}
+
 /// ✓ out of DRAWING mode closes the tools. It fires the performance ONLY when the page was
 /// armed by the hold and a card was committed (and there is a drawing) — that uses up the arm.
 function handleDone() {
@@ -272,10 +271,11 @@ function handleDone() {
   }
 }
 
-/// The performer's hold on the page: arms one reveal. A fresh arm starts a fresh card.
-function armSecret() {
-  if (!secretArmed) appState.resetSecret();
+/// The performer's long press on a cell: picks the value AND arms one reveal.
+function armSecret(point) {
+  appState.arm(grid.valueAt(point));
   secretArmed = true;
+  navigator.vibrate?.(8);
 }
 
 let fontReady = null;
@@ -295,7 +295,10 @@ async function comeToLife() {
   await loadFont();
   if (controller.phase !== 'performing') return;       // reset while the font loaded
 
-  const rig = fit(strokes);
+  // Seams are made stretch-proof; a drawing the fitter can't read confidently as a little
+  // guy moves as ONE piece.
+  let rig = stabilizeSeams(fit(strokes));
+  if (!rigIsConfident(rig)) rig = nonArticulated(rig);
   const ins = stageInsets();
   const setup = makeSetup(rig, stageSize, { x: 0, y: 0 }, ins.top, ins.bottom);
   const slot = forcedRoutine || randomSlot();
@@ -309,13 +312,9 @@ async function comeToLife() {
 
 // ---------------------------------------------------------------- input wiring
 
-attachCatcher(catcher, {
-  onValuePoint: captureGridValue,
-  onCancel: (token) => { appState.capturedValue = token.prior; },
-});
-
-// The arm gesture: hold the page. The "i" glyph blanks the moment the hold registers (the
-// performer's confirmation) and comes back as soon as the finger lifts.
+// The arm gesture: long-press a cell — value + armed. Plain taps on the page do nothing.
+// The "i" glyph blanks the moment the hold registers (the performer's confirmation) and
+// comes back as soon as the finger lifts. A second finger or a drag cancels the hold.
 {
   let timer = 0, start = null, downs = 0;
   const cancel = () => { clearTimeout(timer); timer = 0; };
@@ -325,7 +324,8 @@ attachCatcher(catcher, {
     info.setGlyph(true);
     if (downs > 1 || editorMode === 'drawing' || toolbar.menuOpen || picker.isOpen) return;
     start = { x: e.clientX, y: e.clientY };
-    timer = setTimeout(() => { timer = 0; armSecret(); info.setGlyph(false); }, HOLD_MS);
+    const at = start;
+    timer = setTimeout(() => { timer = 0; armSecret(at); info.setGlyph(false); }, HOLD_MS);
   });
   catcher.addEventListener('pointermove', (e) => {
     if (timer && start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > HOLD_TOL) cancel();
@@ -367,7 +367,7 @@ function runDemo() {
     mk(line(P(2, 200), P(44, 302))),
     mk([P(-14, 32)]), mk([P(14, 32)]),
   ]);
-  appState.capturedValue = 1 + Math.floor(Math.random() * 13);
+  appState.arm(1 + Math.floor(Math.random() * 13));
   appState.commitCard(['clubs', 'hearts', 'spades', 'diamonds'][Math.floor(Math.random() * 4)]);
   editorMode = 'idle';
   sync();

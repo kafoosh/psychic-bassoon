@@ -8,7 +8,7 @@
 //      │ K  │ K  │ K  │ K  │   row 3 — the whole row is King
 //      └────┴────┴────┴────┘
 //
-// Geometry + hit math live ONLY here, shared by the capture and the ruling.
+// Geometry + hit math live ONLY here, shared by the long-press capture and the ruling.
 
 import { LG } from './palette.js';
 
@@ -67,24 +67,4 @@ export function drawRuling(ctx, size, grid) {
   for (let gy = r.y % cellH; gy <= size.height; gy += cellH) { ctx.moveTo(0, gy); ctx.lineTo(size.width, gy); }
   ctx.stroke();
   ctx.restore();
-}
-
-/// The paper's touch surface (GridInputCatcher): a 1-finger TAP, or the touch-down point of
-/// a 1-finger DRAG → `onValuePoint` (live on the first touch). A second finger joining the
-/// same gesture cancels it (the Swift pan caps at one touch), restoring the prior capture.
-export function attachCatcher(el, { onValuePoint, onCancel }) {
-  const active = new Set();
-  let token = null;
-  el.addEventListener('pointerdown', (e) => {
-    active.add(e.pointerId);
-    if (active.size === 1) {
-      token = onValuePoint({ x: e.clientX, y: e.clientY });
-    } else if (token !== null) {
-      onCancel(token);
-      token = null;
-    }
-  });
-  const up = (e) => { active.delete(e.pointerId); if (active.size === 0) token = null; };
-  el.addEventListener('pointerup', up);
-  el.addEventListener('pointercancel', up);
 }

@@ -15,26 +15,28 @@ four bubbles are real tools:
 | Pencil | draws |
 | Square + pencil | starts a new page ("New canvas created") |
 
-Tap **✓** to put the tools away. Nothing else happens.
+Tap **✓** or **Back** to put the tools away. Nothing else happens.
 
 **To perform:**
 
-1. **Arm:** hold the page for about 0.65s. The "i" in the bottom-left circle disappears
-   while the hold registers and comes back when you let go. That's your confirmation.
-2. **Value:** tap the ruled page (or start a drag on it). The page is a hidden 4×4 grid:
-   rows `A 2 3 4` / `5 6 7 8` / `9 10 J Q`, and the whole bottom row is `K`. The last
-   touch before a suit counts.
-3. **Suit:** press a bubble. Left to right they are **C**lubs, **H**earts, **S**pades,
+1. **Value + arm:** long-press (about 0.65s) the cell of the card's value. The page is a
+   hidden 4×4 grid: rows `A 2 3 4` / `5 6 7 8` / `9 10 J Q`, and the whole bottom row is
+   `K`. The "i" in the bottom-left circle disappears while the hold registers and comes back
+   when you let go. That's your confirmation. Ordinary taps on the page never change the
+   value; another long press replaces it.
+2. **Suit:** press a bubble. Left to right they are **C**lubs, **H**earts, **S**pades,
    **D**iamonds. While armed, every bubble opens the colour picker. Hand it over: the
    spectator picks a colour and draws a little guy.
-4. The spectator taps **✓**. Four seconds later he comes to life, performs one of five
-   random routines and reveals the card.
+3. The spectator taps **✓**. Four seconds later he comes to life, performs one of five
+   random routines and reveals the card. **Back** (the arrow) returns to the main page
+   without performing.
 
-- One hold arms one reveal. After a reveal the page is unarmed again; hold again for the
-  next one. A fresh hold also forgets the previous card.
-- If you arm but press a bubble without tapping the page first, ✓ won't perform.
-- **Undo:** tap to step back (this also undoes the eraser); hold for half a second to
-  clear the page.
+- One long press arms one reveal. After a reveal the page is unarmed again.
+- A drawing that doesn't read clearly as a little guy (no head, a missing arm or leg, or a
+  doubtful fit) still performs and reveals, but moves as one piece instead of bending.
+- The props (wand, box, hat, rod, balloon, card) are sized to the drawing.
+- Limbs never pull a line apart: where one pen stroke crosses from one body part into
+  another, the join is kept at a joint, so nothing stretches out of the body.
 - **Long-press the yellow ribbon** to open the menu with **New Page**. Pressing a bubble
   after a reveal also starts a fresh page.
 - The drawing and the reveal scale with the window.
@@ -56,6 +58,8 @@ Debug-only URL flags (not linked anywhere): `?demo=1` seeds a figure and a rando
 and arms automatically; `?routine=classic|topHat|fishing|painter|balloon` forces a routine.
 
 `src/rig/` and `src/anim/` are one-to-one ports of the Swift source in `reference/swift/`.
+Web-only additions sit on top: `src/rig/seams.js` (stretch-proof seams), the confidence gate
+`rigIsConfident` and figure-sized props in `RoutineSetup`.
 The step names and constants are kept in the comments. `tests/figures.mjs` ports the
 `RigHarness` figure library. The current scores match the Swift baseline:
 
