@@ -1,0 +1,108 @@
+// Rig regression gates (node --test). Ports RigHarness's scored populations:
+//   • CLEAN set (≈1900 composed figures): ≥ 99% figures fully correct, 0 explosions,
+//     0 validator demotions;
+//   • PROPORTIONS set (short torso / long legs / λ body / thick pens): 0 explosions and
+//     0 leg strokes partly labelled arm — the gate that matters there;
+//   • hand-built user FIXTURES: all pass (labels + every routine without exploding).
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { fit } from '../src/rig/fitter.js';
+import { makePose, worldPoint } from '../src/rig/model.js';
+import { makeSetup, makeRoutine, SLOTS } from '../src/anim/setup.js';
+import * as F from './figures.mjs';
+
+function evaluate(specs) {
+  const st = { figures: 0, ok: 0, strokeOK: 0, strokeTotal: 0, explode: 0, legSplitArm: 0,
+    torsoAsArm: 0, outlineTorn: 0, demotions: 0, fps: 0, failing: [] };
+  for (const spec of specs) {
+    const { strokes, truth, outline } = F.build(spec);
+    const rig = fit(strokes);
+    const r = F.scoreFigure(rig, truth, outline);
+    st.figures += 1;
+    st.strokeOK += r.strokeOK; st.strokeTotal += r.strokeTotal;
+    st.legSplitArm += r.legSplitArm; st.torsoAsArm += r.torsoAsArm; st.outlineTorn += r.outlineLimbTorn;
+    st.demotions += r.validatorDemotions; st.fps += r.validatorFPs;
+    if (r.figOK) st.ok += 1; else st.failing.push(spec.seed);
+    if (F.explodedSlots(rig).length) st.explode += 1;
+  }
+  return st;
+}
+
+test('clean set: ≥99% figures correct, 0 explosions, 0 demotions', () => {
+  const st = evaluate(F.cleanSpecs());
+  const frac = st.ok / st.figures;
+  console.log(`  clean: ${st.ok}/${st.figures} figures, ${st.strokeOK}/${st.strokeTotal} strokes, `
+    + `explosions ${st.explode}, demotions ${st.demotions}, failing seeds: ${st.failing.join(' ')}`);
+  assert.ok(frac >= 0.99, `figure accuracy ${(frac * 100).toFixed(1)}% < 99%`);
+  assert.ok(st.strokeOK / st.strokeTotal >= 0.999, 'per-stroke accuracy');
+  assert.equal(st.explode, 0, 'animation explosions');
+  assert.equal(st.legSplitArm, 0, 'leg strokes partly labelled arm');
+  assert.equal(st.outlineTorn, 0, 'outline limbs torn');
+  assert.equal(st.demotions, 0, 'validator demotions on known-good figures');
+});
+
+test('proportions set: 0 explosions, 0 leg strokes partly labelled arm', () => {
+  const st = evaluate(F.proportionSpecs());
+  console.log(`  proportions: ${st.ok}/${st.figures} figures (${(100 * st.ok / st.figures).toFixed(0)}%), `
+    + `explosions ${st.explode}, legSplitArm ${st.legSplitArm}, validator FPs ${st.fps}`);
+  assert.equal(st.explode, 0, 'animation explosions');
+  assert.equal(st.legSplitArm, 0, 'leg strokes partly labelled arm');
+  assert.equal(st.fps, 0, 'validator false positives');
+  assert.ok(st.ok / st.figures >= 0.88, 'proportions accuracy regressed');
+});
+
+test('user fixtures: all pass', () => {
+  const failed = [];
+  for (const f of F.userFixtures()) {
+    const rig = fit(f.strokes);
+    const r = F.scoreFigure(rig, f.truth);
+    const ex = F.explodedSlots(rig);
+    if (!r.figOK || ex.length) failed.push(`${f.name}: ${r.failParts.join(' ')} ${ex.join(',')}`);
+  }
+  assert.deepEqual(failed, []);
+});
+
+test('single-tap dots survive and ride the head', () => {
+  const { strokes } = F.build(F.makeSpec({ head: 'circle', torso: 'spineLine', arm: 'lineDown', leg: 'lineStraight', seed: 3 }));
+  const head = strokes[0].points;
+  const cx = head.reduce((s, p) => s + p.x, 0) / head.length;
+  const cy = head.reduce((s, p) => s + p.y, 0) / head.length;
+  strokes.push({ points: [{ x: cx - 14, y: cy - 8 }], width: 5, color: '#000' });              // 1-point eye
+  strokes.push({ points: [{ x: cx + 14, y: cy - 8 }, { x: cx + 14.1, y: cy - 8 }], width: 5, color: '#000' });
+  const rig = fit(strokes);
+  assert.equal(rig.strokes.length, strokes.length);
+  for (const s of rig.strokes.slice(-2)) assert.ok(s.parts.every((p) => p === 'head'), 'dot bound to head');
+});
+
+test('every routine keeps the figure inside the playfield and finishes', () => {
+  const bounds = { width: 390, height: 844 };
+  const { strokes } = F.build(F.makeSpec({ head: 'circle', torso: 'spineLine', arm: 'lineDown', leg: 'lineStraight', seed: 7 }));
+  const rig = fit(strokes);
+  assert.ok(rig.articulated);
+  for (const slot of SLOTS) {
+    const setup = makeSetup(rig, bounds, { x: 0, y: 0 }, 120, 44);
+    const routine = makeRoutine(slot, setup);
+    assert.ok(routine.totalDuration > 10 && routine.totalDuration < 14);
+    for (let t = 1.5; t <= routine.totalDuration; t += 0.25) {
+      const pose = routine.pose(t);
+      for (const s of rig.strokes) {
+        s.points.forEach((p, j) => {
+          const w = worldPoint(rig, p, s.parts[j], pose);
+          assert.ok(w.x > -40 && w.x < bounds.width + 40, `${slot} x out of view at t=${t}`);
+          assert.ok(w.y < bounds.height, `${slot} below the screen at t=${t}`);
+        });
+      }
+    }
+  }
+});
+
+test('FK keeps joints connected (rest pose is identity)', () => {
+  const { strokes } = F.build(F.makeSpec({ head: 'circle', torso: 'spineLine', arm: 'bentLine', leg: 'lineStraight', seed: 9 }));
+  const rig = fit(strokes);
+  const pose = makePose();
+  for (const s of rig.strokes) s.points.forEach((p, j) => {
+    const w = worldPoint(rig, p, s.parts[j], pose);
+    assert.ok(Math.abs(w.x - p.x) < 1e-9 && Math.abs(w.y - p.y) < 1e-9);
+  });
+});
