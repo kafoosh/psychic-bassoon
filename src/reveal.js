@@ -18,6 +18,8 @@ const GLYPH_SCALE = 0.66 / GOCHI_CAP;
 
 /// Classic playing-card red, used for hearts/diamonds regardless of the figure's ink.
 const CARD_RED = 'rgb(217, 41, 41)';    // rgb(0.85, 0.16, 0.16)
+/// Playing-card black for clubs/spades — the Little Guy ink, whatever colour the figure is.
+const CARD_BLACK = '#1C1B19';
 
 export const SUITS = ['clubs', 'hearts', 'spades', 'diamonds'];   // CHaSeD
 export const isRed = (suit) => suit === 'hearts' || suit === 'diamonds';
@@ -36,14 +38,15 @@ export function valueLabel(v) {
 export function drawReveal(ctx, r, payload, ink, opacity) {
   ctx.save();
   ctx.globalAlpha *= opacity;
-  drawCard(ctx, r, payload, ink);
+  drawCard(ctx, r, payload);
   ctx.restore();
 }
 
-function drawCard(ctx, r, card, ink) {
-  // Drawn in the figure's own ink (the whole reveal is "hand-drawn"), EXCEPT a red
-  // suit (hearts/diamonds) is forced to playing-card red regardless of the drawing's colour.
-  const pip = isRed(card.suit) ? CARD_RED : ink;
+function drawCard(ctx, r, card) {
+  // A real card's colours, whatever colour the figure was drawn in: hearts/diamonds red,
+  // clubs/spades black — the value, the corner suits and the centre pip alike. (The card's
+  // outline and the props stay in the figure's ink.)
+  const pip = isRed(card.suit) ? CARD_RED : CARD_BLACK;
   const value = valueLabel(card.value);
   const cornerH = r.height * 0.15;
 
