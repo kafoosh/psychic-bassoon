@@ -10,6 +10,11 @@
 import { det } from './palette.js';
 
 export const FONT_FAMILY = '"Gochi Hand"';
+// Gochi Hand's cap height is ≈0.51 em; the bold system face the Swift reveal used is ≈0.66 em.
+// Scale the font so a value glyph keeps the visible height the layout was tuned for, and
+// centre each glyph on its cap height (not the em box).
+const GOCHI_CAP = 0.51;
+const GLYPH_SCALE = 0.66 / GOCHI_CAP;
 
 /// Classic playing-card red, used for hearts/diamonds regardless of the figure's ink.
 const CARD_RED = 'rgb(217, 41, 41)';    // rgb(0.85, 0.16, 0.16)
@@ -76,7 +81,7 @@ export function drawLooseText(ctx, s, center, size, color, seed, maxWidth = Infi
   // Measure each glyph at a given size, laid out horizontally.
   const resolve = (sz) => {
     const spacing = sz * 0.02;
-    ctx.font = `${sz}px ${FONT_FAMILY}`;
+    ctx.font = `${sz * GLYPH_SCALE}px ${FONT_FAMILY}`;
     const items = chars.map((ch) => ({ ch, w: ctx.measureText(ch).width }));
     const total = items.reduce((a, it) => a + it.w + spacing, 0);
     return { items, total: total - spacing, spacing };
@@ -90,11 +95,15 @@ export function drawLooseText(ctx, s, center, size, color, seed, maxWidth = Infi
     m = resolve(size);
   }
 
+  const px = size * GLYPH_SCALE;
   ctx.save();
   ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = px * 0.025;           // a touch of pen weight
+  ctx.lineJoin = 'round';
   ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = `${size}px ${FONT_FAMILY}`;
+  ctx.textBaseline = 'alphabetic';
+  ctx.font = `${px}px ${FONT_FAMILY}`;
   let x = center.x - m.total / 2;
   m.items.forEach((item, i) => {
     const cx = x + item.w / 2;
@@ -104,7 +113,8 @@ export function drawLooseText(ctx, s, center, size, color, seed, maxWidth = Infi
     ctx.save();
     ctx.translate(cx + jx, center.y + jy);
     ctx.rotate(rot);
-    ctx.fillText(item.ch, 0, 0);
+    ctx.fillText(item.ch, 0, px * GOCHI_CAP / 2);
+    ctx.strokeText(item.ch, 0, px * GOCHI_CAP / 2);
     ctx.restore();
     x += item.w + m.spacing;
   });
