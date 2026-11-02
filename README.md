@@ -5,6 +5,8 @@ path only). Live at **https://draw.oddpaq.com/**.
 
 ## Performing
 
+A two-page illustrated guide is in [`docs/A-Little-Guy-Performer-Guide.pdf`](docs/A-Little-Guy-Performer-Guide.pdf).
+
 **Unarmed** (the default), it's an ordinary drawing toy. The page ignores taps, and the
 four bubbles are real tools:
 
