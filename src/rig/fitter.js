@@ -26,7 +26,10 @@ const INF = Number.MAX_VALUE;
 
 /// Harness-only step trace: when non-null, `fit` appends a per-stroke label histogram after
 /// each labelling step so a mislabel can be pinned to the pass that made it.
-export const debug = { trace: null };
+/// `off` switches individual crotch-guard layers off for A/B runs ('3-seed', '7c2',
+/// '7e-trunk', '7d-trunk', '7i-run', '7i-whole') — compare by failing seed against the
+/// baseline, not just the rate.
+export const debug = { trace: null, off: new Set() };
 
 export function fit(inputStrokes) {
   function traceStep(name, parts, extra = '') {
@@ -108,19 +111,79 @@ export function fit(inputStrokes) {
 
   // Spine x per row: follow the run nearest the previous spine x, seeded at the head.
   // Robust to lean (the centreline tracks the body down) and to splayed limbs.
-  const spineX = new Array(grid.rows).fill(headCenter.x);
-  let prev = headCenter.x;
   const maxSpineStep = Math.max(2, grid.cellSize * 0.5);
-  for (let r = topRow; r <= botRow; r++) {
-    const rs = rowRuns[r];
-    if (rs.length === 0) { spineX[r] = prev; continue; }
-    // Prefer the run that still CONTAINS the spine; else the nearest. Then move toward
-    // its centre only a little per row — the spine is near-vertical, so a big jump means
-    // an arm merged into the run, and we must NOT let the centreline drift onto the arm
-    // (which would mislabel that arm as torso and the spine as an arm).
-    const cr = rs.find((q) => q.x0 <= prev && prev <= q.x1) || minBy(rs, (q) => Math.abs(q.xMid - prev));
-    spineX[r] = prev + Math.max(-maxSpineStep, Math.min(maxSpineStep, cr.xMid - prev));
-    prev = spineX[r];
+  function trackSpine(out, seedX, fromRow) {
+    let prev = seedX;
+    for (let r = fromRow; r <= botRow; r++) {
+      const rs = rowRuns[r];
+      if (rs.length === 0) { out[r] = prev; continue; }
+      // Prefer the run that still CONTAINS the spine; else the nearest. Then move toward
+      // its centre only a little per row — the spine is near-vertical, so a big jump means
+      // an arm merged into the run, and we must NOT let the centreline drift onto the arm
+      // (which would mislabel that arm as torso and the spine as an arm).
+      const cr = rs.find((q) => q.x0 <= prev && prev <= q.x1) || minBy(rs, (q) => Math.abs(q.xMid - prev));
+      out[r] = prev + Math.max(-maxSpineStep, Math.min(maxSpineStep, cr.xMid - prev));
+      prev = out[r];
+    }
+    return out;
+  }
+  let spineX = trackSpine(new Array(grid.rows).fill(headCenter.x), headCenter.x, topRow);
+  // Don't trust the head alone: a spine drawn to one SIDE of a big head starts outside
+  // the creeping track, which then floats in empty space beside it (or latches onto an
+  // arm) — and the whole spine reads as an arm, swinging from the shoulder, crotch and
+  // all. Re-seed the track just below the neck when the drawing says where the trunk is:
+  //   (a) a drawn SPINE — an open, thin, long, near-vertical, straight stroke rooted at
+  //       the neck (the one nearest the head when several qualify): seed on it;
+  //   (b) otherwise, if the head-seeded track keeps falling OFF ink through the upper
+  //       trunk, the run a track follows best (ties → nearest the head), when clearly
+  //       better.
+  // A figure whose head sits over its trunk tracks the same line either way.
+  {
+    const bandTop = neckRow + 1;
+    const bandBot = Math.min(botRow, neckRow + Math.max(4, Math.round((botRow - neckRow) * 0.35)));
+    const slack = grid.cellSize;
+    const onInk = (track) => {
+      let hit = 0, rows = 0;
+      for (let r = bandTop; r <= bandBot; r++) {
+        if (!rowRuns[r].length) continue;
+        rows += 1;
+        if (rowRuns[r].some((q) => q.x0 - slack <= track[r] && track[r] <= q.x1 + slack)) hit += 1;
+      }
+      return rows ? hit / rows : 1;
+    };
+    const headF = onInk(spineX);
+    const len = Math.max(bbox.maxY - neckY, 1);
+    const seedY = grid.cellY(bandTop);
+    let spine = null;
+    for (let i = 0; i < raw.length && bandBot > bandTop + 2; i++) {
+      if (raw[i].closed || raw[i].fat || i === headIndex) continue;
+      const pts = raw[i].points;
+      const { root, foot } = strokeRoot(pts);
+      const dy = foot.y - root.y, dx = foot.x - root.x;
+      if (!(root.y >= neckY - headRadius * 0.3 && root.y <= neckY + len * 0.12)) continue;
+      if (!(dy >= len * 0.35 && Math.abs(dx) <= dy * 0.35)) continue;
+      const chord = Math.hypot(dx, dy);
+      let dev = 0;
+      for (const p of pts) dev = Math.max(dev, Math.abs((p.x - root.x) * dy - (p.y - root.y) * dx) / chord);
+      if (!(dev <= Math.max(chord * 0.12, avgInkW * 2))) continue;
+      const x = root.x + dx * Math.min(Math.max((seedY - root.y) / dy, 0), 1);
+      if (spine === null || Math.abs(x - headCenter.x) < Math.abs(spine - headCenter.x)) spine = x;
+    }
+    if (spine !== null && !debug.off.has('3-seed')) {
+      const t = trackSpine(spineX.slice(), spine, bandTop);
+      if (onInk(t) >= headF - 0.05) spineX = t;
+    } else if (bandBot > bandTop + 2 && headF < 0.75 && !debug.off.has('3-seed')) {
+      let best = null;
+      for (let r = bandTop; r <= Math.min(bandTop + 2, bandBot); r++) {
+        for (const q of rowRuns[r]) {
+          const t = trackSpine(spineX.slice(), q.xMid, bandTop);
+          const f = onInk(t);
+          const d = Math.abs(q.xMid - headCenter.x);
+          if (best === null || f > best.f + 1e-9 || (Math.abs(f - best.f) <= 1e-9 && d < best.d)) best = { f, d, t };
+        }
+      }
+      if (best !== null && best.f >= 0.8 && best.f >= headF + 0.25) spineX = best.t;
+    }
   }
   for (let r = 0; r < topRow; r++) spineX[r] = spineX[topRow];
 
@@ -592,6 +655,57 @@ export function fit(inputStrokes) {
     regionParts[i] = healed;
   }
 
+  // The TRUNK stroke test used by every "mixed labels → one limb" rule: torso-majority,
+  // its torso ink spanning ≥ ½ the trunk (see trunkLine), AND it is THE trunk — the
+  // stroke whose torso ink spans the most height (a hand-on-hip arm drawn inside a wide
+  // torso band can be torso-majority too, but never out-spans the spine / outline).
+  function theTrunk(i) {
+    const line = trunkLine(regionParts[i], raw[i].points, crotchY - neckY);
+    if (!line) return null;
+    const mine = torsoSpan(regionParts[i], raw[i].points);
+    for (let k = 0; k < raw.length; k++) {
+      if (k !== i && torsoSpan(regionParts[k], raw[k].points) > mine) return null;
+    }
+    return line;
+  }
+
+  // ---- Step 7c2: the TRUNK's end tails are trunk ----
+  // The spine tracker starts at the HEAD's centre and only creeps sideways, so (when the
+  // Step-3 re-seed finds no drawn spine to follow) a spine drawn off-centre under a big
+  // head starts OUTSIDE the torso band: its top points read ARM (the "zigzag at the neck" — the top of the spine tears off and rides the arm). And
+  // a little flick/hook where the spine meets the legs lands in a LEG run. Both are the
+  // same pen line carrying on. On a stroke that IS the trunk, fit the line x = a + b·y
+  // through its OWN torso points (so a lean is followed) — a SHORT limb run at either end
+  // that stays on that line is spine, not limb. A real limb drawn in one stroke with the
+  // spine bends OFF the line or runs LONG (the λ body's leg), so it keeps its labels.
+  const trunkLen0 = Math.max(crotchY - neckY, 1);
+  for (let i = 0; i < raw.length && !debug.off.has('7c2'); i++) {
+    if (rigidFlags[i] || pairHandled[i] || legSide[i] !== null) continue;
+    const ps = regionParts[i], pts = raw[i].points;
+    const fitLine = theTrunk(i);
+    if (!fitLine) continue;
+    const tol = Math.max(6, torsoHalfW * 1.25);
+    const out = ps.slice();
+    const n = out.length;
+    for (const fromStart of [true, false]) {
+      let k = fromStart ? 0 : n - 1;
+      const step = fromStart ? 1 : -1;
+      const runPart = out[k];
+      if (!(isArm(runPart) || isLeg(runPart))) continue;
+      const idx = [];
+      while (k >= 0 && k < n && out[k] === runPart) { idx.push(k); k += step; }
+      if (!(k >= 0 && k < n && out[k] === P.torso)) continue;   // must hand over to the trunk
+      let lo = INF, hi = -INF, xl = INF, xh = -INF, onLine = true;
+      for (const j of idx) {
+        const p = pts[j];
+        lo = Math.min(lo, p.y); hi = Math.max(hi, p.y); xl = Math.min(xl, p.x); xh = Math.max(xh, p.x);
+        if (Math.abs(p.x - (fitLine.a + fitLine.b * p.y)) > tol) onLine = false;
+      }
+      if (onLine && Math.max(hi - lo, xh - xl) <= trunkLen0 * 0.2) for (const j of idx) out[j] = P.torso;
+    }
+    regionParts[i] = out;
+  }
+
   traceStep('7c heal', regionParts);
   // ---- Step 7e: a thin stroke is NEVER half arm, half leg ----
   // An arm and a leg don't share a pen stroke, so a thin stroke carrying BOTH labels is
@@ -644,8 +758,19 @@ export function fit(inputStrokes) {
         k = e + 1;
       }
     }
-    const legLike = foot.y >= groundY || root.y > hipBandY || sandwiched;
     const out = ps.slice();
+    // This rule is written for a LIMB cut in two. The TRUNK is not a limb: a spine that
+    // carries a stray arm run (its off-centre top) and a stray leg run (a crotch flick)
+    // must not be "resolved" into one arm — that turned the whole spine, crotch flick
+    // and all, into an arm that swung from the shoulder. Unless the stroke is a genuine
+    // leg too (the λ body: it reaches the ground, or its arm run bridges spine → leg),
+    // the trunk's stray leg labels ride the ROOT, and they never become arm.
+    if (!debug.off.has('7e-trunk') && foot.y < groundY && !sandwiched && theTrunk(i)) {
+      for (let j = 0; j < out.length; j++) if (isLeg(out[j])) out[j] = P.torso;
+      regionParts[i] = out;
+      continue;
+    }
+    const legLike = foot.y >= groundY || root.y > hipBandY || sandwiched;
     if (legLike) {
       const side = lLeg >= rLeg ? P.leftLeg : P.rightLeg;
       for (let j = 0; j < out.length; j++) if (isArm(out[j])) out[j] = side;
@@ -701,6 +826,10 @@ export function fit(inputStrokes) {
     const armish = armN * 2 > count
       || (armN + torsoN >= Math.floor(count * 8 / 10) && armN >= Math.max(5, Math.floor(count / 5)));
     if (!armish) continue;
+    // Never on the TRUNK: a torso-majority stroke whose torso run spans most of the trunk
+    // is the spine carrying a stray arm run (an off-centre top under a big head), not an
+    // arm — consolidating it made the whole spine an arm, swinging from the shoulder.
+    if (!debug.off.has('7d-trunk') && theTrunk(i)) continue;
     // Both-arms-in-one-stroke: genuine limb REACH past the torso band on EACH side
     // keeps the per-side split — whatever hangs left of the body is the left arm,
     // right of it the right arm, however UNEQUAL the two branches are. (A single arm
@@ -841,6 +970,91 @@ export function fit(inputStrokes) {
   }
 
   traceStep('hip-raise', regionParts, ` crotch=(${Math.trunc(crotchX)},${Math.trunc(crotchY)})`);
+  // ---- Step 7i: SAFETY NET — an arm meets the body only at the SHOULDERS ----
+  // However hip/crotch ink came to be labelled arm (a belt's ends, a tail, a crotch flick,
+  // a leg top), it then rotates about the SHOULDER and sweeps a line out of the crotch
+  // when the arm waves — and the hand/prop anchor (the arm point farthest from the
+  // shoulder) lands at the crotch. Neither the bbox-explosion test nor a per-side check
+  // sees it. Runs LAST, after every relabelling pass, so the validator, joints and hand
+  // anchors below are computed from clean labels.
+  {
+    const trunk = Math.max(crotchY - neckY, 1);
+    const junctionFloor = neckY + trunk * 0.75;
+    const shoulderReach = neckY + trunk * 0.65;
+    // (a) An arm run at a stroke's END joins that stroke's body ink (torso / leg). A real
+    //     arm's junction is up at the shoulder; a junction down at the hip (below 0.75 of
+    //     the trunk) means the run is hip ink — give it back to the part it joins.
+    for (let i = 0; i < raw.length && !debug.off.has('7i-run'); i++) {
+      if (rigidFlags[i]) continue;
+      const ps = regionParts[i], pts = raw[i].points, n = ps.length;
+      const out = ps.slice();
+      let k = 0;
+      while (k < n) {
+        if (!isArm(ps[k])) { k += 1; continue; }
+        let e = k;
+        while (e + 1 < n && ps[e + 1] === ps[k]) e += 1;
+        let back = null;
+        // …unless the run itself reaches up into the shoulder band (where refineJoints
+        // snaps a shoulder): that is a real arm whose hanging tip merely dips into the
+        // hip / leg band on a short torso, not hip ink.
+        let runTop = INF;
+        for (let m = k; m <= e; m++) runTop = Math.min(runTop, pts[m].y);
+        // Only a run at the stroke's END (a belt end, a tail, a crotch flick): an arm run
+        // sandwiched inside a stroke is left to the passes that own those (7c / 7e).
+        const endRun = k === 0 || e === n - 1;
+        for (const j of (endRun && runTop > shoulderReach ? [k - 1, e + 1] : [])) {
+          if (j < 0 || j >= n || !(ps[j] === P.torso || isLeg(ps[j]))) continue;
+          if (pts[j].y > junctionFloor && (back === null || pts[j].y > back.y)) back = { y: pts[j].y, part: ps[j] };
+        }
+        if (back !== null) for (let m = k; m <= e; m++) out[m] = back.part;
+        k = e + 1;
+      }
+      regionParts[i] = out;
+    }
+    // (b) A WHOLE thin, open stroke labelled arm that lies entirely at the hip has no
+    //     junction to test. It is body ink (a belt, a tail) when it spans the body's
+    //     centre line — measured from the TORSO INK at its height, not the crotch x,
+    //     which a mono-tube leg pair can misplace — or when it doesn't hang off any
+    //     higher arm ink on its side (a real two-stroke forearm hangs off its elbow).
+    //     Closed strokes are skipped: a hand blob drawn just off the arm tip is a hand,
+    //     and Step 7f binds it. The 0.92 floor keeps a short torso's low arms arms.
+    const wholeFloor = neckY + trunk * 0.92;
+    const touchR = Math.max(8, trunk * 0.08);
+    const torsoPts = [];
+    for (let i = 0; i < raw.length; i++) {
+      raw[i].points.forEach((p, j) => { if (regionParts[i][j] === P.torso) torsoPts.push(p); });
+    }
+    const relabel = [];
+    for (let i = 0; i < raw.length && !debug.off.has('7i-whole'); i++) {
+      if (rigidFlags[i] || raw[i].closed) continue;
+      const ps = regionParts[i], pts = raw[i].points;
+      const side = ps[0];
+      if (!isArm(side) || !ps.every((p) => p === side)) continue;
+      if (!pts.every((p) => p.y > wholeFloor)) continue;
+      let xl = INF, xh = -INF, ylo = INF, yhi = -INF;
+      for (const p of pts) { xl = Math.min(xl, p.x); xh = Math.max(xh, p.x); ylo = Math.min(ylo, p.y); yhi = Math.max(yhi, p.y); }
+      const band = Math.max(trunk * 0.08, avgInkW * 2);
+      let tl = INF, th = -INF;
+      for (const p of torsoPts) {
+        if (p.y >= ylo - band && p.y <= yhi + band) { tl = Math.min(tl, p.x); th = Math.max(th, p.x); }
+      }
+      const centre = tl <= th ? (tl + th) / 2 : centerAt((ylo + yhi) / 2);
+      const spans = xl < centre && xh > centre;
+      let hangs = false;
+      for (let k = 0; k < raw.length && !hangs; k++) {
+        if (k === i) continue;
+        const kp = raw[k].points, kl = regionParts[k];
+        for (let j = 0; j < kp.length && !hangs; j++) {
+          if (kl[j] !== side || !(kp[j].y <= ylo + touchR)) continue;
+          for (const p of pts) if (dist(p, kp[j]) <= touchR) { hangs = true; break; }
+        }
+      }
+      if (spans || !hangs) relabel.push(i);
+    }
+    for (const i of relabel) regionParts[i] = regionParts[i].map(() => P.torso);
+  }
+
+  traceStep('7i hip-arm', regionParts);
   // ---- Step 8: skeleton joints + elbow/knee/hand/foot refinement ----
   function baseSkeleton() {
     const shoulderY = neckY + (crotchY - neckY) * 0.10;
@@ -1434,4 +1648,28 @@ class RasterGrid {
       return { c0, c1, x0, x1, xMid: (x0 + x1) / 2, w: x1 - x0 };
     });
   }
+}
+
+/// The TRUNK test shared by every "is this stroke the spine?" rule: torso-majority, with
+/// its torso points spanning at least half the trunk's height. Returns the least-squares
+/// line x = a + b·y through those torso points (so a lean is followed), else null.
+function trunkLine(parts, pts, trunkLen) {
+  let n = 0, sy = 0, sx = 0, syy = 0, sxy = 0, lo = INF, hi = -INF;
+  parts.forEach((p, j) => {
+    if (p !== P.torso) return;
+    const q = pts[j];
+    n += 1; sy += q.y; sx += q.x; syy += q.y * q.y; sxy += q.x * q.y;
+    lo = Math.min(lo, q.y); hi = Math.max(hi, q.y);
+  });
+  if (!(n * 2 > parts.length && n >= 4 && hi - lo >= trunkLen * 0.5)) return null;
+  const d = n * syy - sy * sy;
+  const b = Math.abs(d) > 1e-9 ? (n * sxy - sx * sy) / d : 0;
+  return { a: (sx - b * sy) / n, b };
+}
+
+/// Height spanned by a stroke's torso-labelled points (0 if none).
+function torsoSpan(parts, pts) {
+  let lo = INF, hi = -INF;
+  parts.forEach((p, j) => { if (p === P.torso) { lo = Math.min(lo, pts[j].y); hi = Math.max(hi, pts[j].y); } });
+  return hi > lo ? hi - lo : 0;
 }

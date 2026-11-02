@@ -76,14 +76,35 @@ and arms automatically; `?routine=classic|topHat|fishing|painter|balloon` forces
 
 `src/rig/` and `src/anim/` are one-to-one ports of the Swift source in `reference/swift/`.
 Web-only additions sit on top: `src/rig/seams.js` (stretch-proof seams), the confidence gate
-`rigIsConfident` and figure-sized props in `RoutineSetup`.
-The step names and constants are kept in the comments. `tests/figures.mjs` ports the
-`RigHarness` figure library. The current scores match the Swift baseline:
+`rigIsConfident` and figure-sized props in `RoutineSetup`, and the **crotch guards**: hip or
+crotch ink must never ride an arm (when it does, a line shoots out of the crotch as the arm
+waves):
 
-- clean set: 1897/1900 figures
-- proportions set: 92%
+- the spine tracker re-seeds below the neck on a drawn spine, so it no longer trusts the head
+  centre alone (Step 3);
+- a short run of limb labels at either end of the trunk that stays on its line is trunk
+  (Step 7c2);
+- the "half arm / half leg" resolver (7e) and the arm consolidation (7d) never apply to the
+  trunk;
+- a final safety net (Step 7i) runs before the validator and joint estimation. An arm run at
+  the end of a stroke that meets body ink at the hip is given back to that body ink, and a
+  whole open arm stroke lying at the hip is body ink when it spans the torso's centre line or
+  doesn't hang off its arm.
+
+The step names and constants are kept in the comments. `tests/figures.mjs` ports the
+`RigHarness` figure library, plus a crotch-stressor set and the **crotch-fling** outcome
+metric. That metric is gated at 0 on every set, with a self-test that proves it fires. Current
+scores:
+
+- clean set: 1897/1900 figures, 0 crotch fling
+- adversarial set: 362/400 (91%; 351 before the crotch guards), 0 crotch fling (18 before)
+- proportions set: 552/600 (92%), 0 crotch fling
+- crotch stressors: 278/300 (93%; 207 with the guards off), 0 crotch fling (61 with them off)
 - 0 explosions
-- every user fixture passes
+- every user fixture passes, including `crotchFlick` (the reported crotch-as-arm drawing)
+
+For A/B runs, `debug.off` in `src/rig/fitter.js` switches single guards off. Compare by
+failing seed, not just by percentage.
 
 ## Deploying
 

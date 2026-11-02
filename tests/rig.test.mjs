@@ -3,7 +3,13 @@
 //     0 validator demotions;
 //   • PROPORTIONS set (short torso / long legs / λ body / thick pens): 0 explosions and
 //     0 leg strokes partly labelled arm — the gate that matters there;
+//   • ADVERSARIAL set (belts/tails at the hip, hands on hips, mono-tube legs, …) and the
+//     CROTCH stressors (off-centre spine under a big head, crotch flick, long torso):
+//     0 crotch fling, 0 explosions, accuracy floors;
 //   • hand-built user FIXTURES: all pass (labels + every routine without exploding).
+// CROTCH FLING (hip/crotch ink riding an arm — the line that shoots out of the crotch
+// when an arm waves) is gated at 0 on every set: label-majority and bbox-explosion
+// checks both miss it.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +21,7 @@ import * as F from './figures.mjs';
 
 function evaluate(specs) {
   const st = { figures: 0, ok: 0, strokeOK: 0, strokeTotal: 0, explode: 0, legSplitArm: 0,
-    torsoAsArm: 0, outlineTorn: 0, demotions: 0, fps: 0, failing: [] };
+    torsoAsArm: 0, outlineTorn: 0, demotions: 0, fps: 0, fling: 0, failing: [], flingSeeds: [] };
   for (const spec of specs) {
     const { strokes, truth, outline } = F.build(spec);
     const rig = fit(strokes);
@@ -26,6 +32,7 @@ function evaluate(specs) {
     st.demotions += r.validatorDemotions; st.fps += r.validatorFPs;
     if (r.figOK) st.ok += 1; else st.failing.push(spec.seed);
     if (F.explodedSlots(rig).length) st.explode += 1;
+    if (F.crotchFling(rig, truth)) { st.fling += 1; st.flingSeeds.push(spec.seed); }
   }
   return st;
 }
@@ -34,23 +41,55 @@ test('clean set: ≥99% figures correct, 0 explosions, 0 demotions', () => {
   const st = evaluate(F.cleanSpecs());
   const frac = st.ok / st.figures;
   console.log(`  clean: ${st.ok}/${st.figures} figures, ${st.strokeOK}/${st.strokeTotal} strokes, `
-    + `explosions ${st.explode}, demotions ${st.demotions}, failing seeds: ${st.failing.join(' ')}`);
+    + `explosions ${st.explode}, fling ${st.fling}, demotions ${st.demotions}, failing seeds: ${st.failing.join(' ')}`);
   assert.ok(frac >= 0.99, `figure accuracy ${(frac * 100).toFixed(1)}% < 99%`);
   assert.ok(st.strokeOK / st.strokeTotal >= 0.999, 'per-stroke accuracy');
   assert.equal(st.explode, 0, 'animation explosions');
   assert.equal(st.legSplitArm, 0, 'leg strokes partly labelled arm');
   assert.equal(st.outlineTorn, 0, 'outline limbs torn');
   assert.equal(st.demotions, 0, 'validator demotions on known-good figures');
+  assert.equal(st.fling, 0, `crotch fling: ${st.flingSeeds.join(' ')}`);
 });
 
 test('proportions set: 0 explosions, 0 leg strokes partly labelled arm', () => {
   const st = evaluate(F.proportionSpecs());
   console.log(`  proportions: ${st.ok}/${st.figures} figures (${(100 * st.ok / st.figures).toFixed(0)}%), `
-    + `explosions ${st.explode}, legSplitArm ${st.legSplitArm}, validator FPs ${st.fps}`);
+    + `explosions ${st.explode}, legSplitArm ${st.legSplitArm}, validator FPs ${st.fps}, fling ${st.fling}`);
   assert.equal(st.explode, 0, 'animation explosions');
+  assert.equal(st.fling, 0, `crotch fling: ${st.flingSeeds.join(' ')}`);
   assert.equal(st.legSplitArm, 0, 'leg strokes partly labelled arm');
   assert.equal(st.fps, 0, 'validator false positives');
   assert.ok(st.ok / st.figures >= 0.88, 'proportions accuracy regressed');
+});
+
+test('adversarial set: 0 crotch fling, 0 explosions', () => {
+  const st = evaluate(F.adversarialSpecs());
+  console.log(`  adversarial: ${st.ok}/${st.figures} figures (${(100 * st.ok / st.figures).toFixed(0)}%), `
+    + `explosions ${st.explode}, fling ${st.fling}`);
+  assert.equal(st.explode, 0, 'animation explosions');
+  assert.equal(st.fling, 0, `crotch fling: ${st.flingSeeds.join(' ')}`);
+  assert.ok(st.ok / st.figures >= 0.88, 'adversarial accuracy regressed');
+});
+
+test('crotch stressors: 0 crotch fling, 0 explosions', () => {
+  const st = evaluate(F.crotchSpecs());
+  console.log(`  crotch stressors: ${st.ok}/${st.figures} figures (${(100 * st.ok / st.figures).toFixed(0)}%), `
+    + `explosions ${st.explode}, fling ${st.fling}`);
+  assert.equal(st.explode, 0, 'animation explosions');
+  assert.equal(st.fling, 0, `crotch fling: ${st.flingSeeds.join(' ')}`);
+  assert.ok(st.ok / st.figures >= 0.9, 'crotch-stressor accuracy regressed');
+});
+
+test('crotch-fling metric fires on a forced mislabel (self-test)', () => {
+  // A correctly rigged figure, then the reported mislabel forced in: the last few spine
+  // points → forearm. The metric must fire in EVERY routine; the clean rig in none.
+  const f = F.userFixtures()[0];
+  const rig = fit(f.strokes);
+  assert.equal(F.crotchFling(rig, f.truth), 0);
+  for (const slot of SLOTS) assert.equal(F.crotchFling(rig, f.truth, undefined, [slot]), 0, `${slot} clean`);
+  const n = rig.strokes[1].parts.length;
+  for (let j = n - 4; j < n; j++) rig.strokes[1].parts[j] = 'rightForearm';
+  for (const slot of SLOTS) assert.equal(F.crotchFling(rig, f.truth, undefined, [slot]), 1, `${slot} must fire`);
 });
 
 test('user fixtures: all pass', () => {
@@ -59,7 +98,8 @@ test('user fixtures: all pass', () => {
     const rig = fit(f.strokes);
     const r = F.scoreFigure(rig, f.truth);
     const ex = F.explodedSlots(rig);
-    if (!r.figOK || ex.length) failed.push(`${f.name}: ${r.failParts.join(' ')} ${ex.join(',')}`);
+    const fl = F.crotchFling(rig, f.truth);
+    if (!r.figOK || ex.length || fl) failed.push(`${f.name}: ${r.failParts.join(' ')} ${ex.join(',')}${fl ? ' fling' : ''}`);
   }
   assert.deepEqual(failed, []);
 });
@@ -156,7 +196,7 @@ test('props are sized to the figure', () => {
 
 test('no seam stretches: limbs never pull a stroke apart (crotch, hips, elbows)', () => {
   const bad = [];
-  for (const [name, specs] of [['clean', F.cleanSpecs()], ['adversarial', F.adversarialSpecs()], ['proportions', F.proportionSpecs()]]) {
+  for (const [name, specs] of [['clean', F.cleanSpecs()], ['adversarial', F.adversarialSpecs()], ['proportions', F.proportionSpecs()], ['crotch', F.crotchSpecs()]]) {
     for (const spec of specs) {
       const rig = stabilizeSeams(fit(F.build(spec).strokes));
       const s = F.seamStretch(rig);

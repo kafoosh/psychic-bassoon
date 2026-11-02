@@ -238,7 +238,7 @@ function decorations(d, m, spec) {
 export function makeSpec(o) {
   return Object.assign({
     deco: {}, lean: 0, scale: 1, wobble: 0, seed: 1, penScale: 1, oneLeg: false,
-    torsoLen: 3.0, legLen: 2.6, lambdaLeg: false,
+    torsoLen: 3.0, legLen: 2.6, lambdaLeg: false, spineOffset: 0, flick: 0,
   }, o);
 }
 
@@ -252,6 +252,8 @@ export function specTags(s) {
   const crotchFrac = (s.torsoLen + 0.3) / (s.torsoLen + 0.3 + s.legLen);
   if (crotchFrac < 0.42) t.push('shortTorso'); else if (crotchFrac > 0.62) t.push('longTorso');
   if (s.lambdaLeg) t.push('lambdaLeg');
+  if (Math.abs(s.spineOffset) > 0.2) t.push('offCentreSpine');
+  if (s.flick) t.push('crotchFlick');
   return t;
 }
 
@@ -268,7 +270,9 @@ function metrics(spec, canvas) {
   }
   const cx = canvas.width * 0.5;
   const topY = canvas.height * 0.16;
-  const headCenter = pt(cx, topY + headRY);
+  // spineOffset: the body is drawn to one side of the head's centre (× u) — the spine
+  // tracker is seeded at the head, so an off-centre spine starts outside the torso band.
+  const headCenter = pt(cx - (spec.spineOffset || 0) * u, topY + headRY);
   const neckY = headCenter.y + headRY;
   const shoulderY = neckY + u * 0.3;
   const shoulderHalfW = spec.torso === 'spineLine' ? u * 0.12 : u * 0.95;
@@ -285,6 +289,12 @@ export function build(spec, canvas = { width: 390, height: 844 }) {
   const labeled = [];
   labeled.push(...head(spec.head, m));
   const torsoStrokes = torso(spec.torso, m);
+  // flick: a tiny hook where the spine meets the legs (±1 = its side), same pen line.
+  if (spec.flick && spec.torso === 'spineLine' && !spec.lambdaLeg) {
+    const f = spec.flick, end = pt(m.cx, m.hipY);
+    torsoStrokes[0].points.push(...polyline([end, pt(end.x + f * m.u * 0.16, end.y + m.u * 0.14),
+      pt(end.x + f * m.u * 0.26, end.y + m.u * 0.04)], 4).slice(1));
+  }
   const leftLeg = leg(spec.leg, -1, m);
   if (spec.lambdaLeg && spec.torso === 'spineLine' && torsoStrokes.length === 1 && leftLeg.length === 1 && !legIsOutline(spec.leg)) {
     labeled.push(LS(torsoStrokes[0].points.concat(leftLeg[0].points), P.torso, { kind: 'spineLeg' }));
@@ -406,6 +416,41 @@ export function proportionSpecs() {
   return specs;
 }
 
+/// Crotch stressors (the "hip/crotch ink rides an arm" family): an off-centre spine under
+/// a big head, a flick/hook at the spine's foot, a very long torso (crotch at 65–70% of
+/// neck→feet), belts and tails at the hip, hands on hips, cross-body and two-stroke arms,
+/// hand blobs, mono-tube legs and the λ body. Gated on crotch fling = 0.
+export function crotchSpecs() {
+  const specs = [];
+  const rng = new LCG(0xC207C4);
+  let sid = 300000;
+  const heads = ['bigCircle', 'circle', 'wideOval', 'tallOval'];
+  const arms = coreArms.concat(['handOnHip', 'twoStroke', 'crossBody']);
+  const legs = ['lineStraight', 'lineSplay', 'bentLine', 'steepSplay', 'crossed', 'twoStroke', 'outlineTapered', 'monoTube'];
+  // Pick from the HIGH bits: `LCG.pick` takes next() % n, and an LCG's low bits cycle
+  // with a tiny period, so lists of length 4 and 8 collapse to a handful of combos.
+  rng.pick = (xs) => xs[Math.floor(rng.unit() * xs.length)];
+  for (let k = 0; k < 300; k++) {
+    const deco = {};
+    if (rng.bool(0.4)) deco.face = true;
+    if (rng.bool(0.25)) deco.belt = true;
+    if (rng.bool(0.2)) deco.tail = true;
+    if (rng.bool(0.25)) deco.hands = true;
+    if (rng.bool(0.2)) deco.feet = true;
+    const torsoV = rng.bool(0.7) ? 'spineLine' : rng.pick(coreTorsos);
+    const spec = makeSpec({ head: rng.pick(heads), torso: torsoV, arm: rng.pick(arms), leg: rng.pick(legs), deco,
+      lean: rng.range(-0.1, 0.1), scale: rng.range(0.6, 1.2), wobble: rng.bool(0.5) ? rng.range(0, 2.5) : 0, seed: sid });
+    spec.spineOffset = rng.bool(0.7) ? rng.range(-0.8, 0.8) : 0;
+    spec.flick = rng.bool(0.5) ? (rng.bool(0.5) ? 1 : -1) : 0;
+    spec.torsoLen = rng.range(3.0, 4.8);
+    spec.legLen = rng.range(1.8, 2.8);
+    if (rng.bool(0.2)) spec.penScale = 2;
+    if (rng.bool(0.15)) spec.lambdaLeg = true;
+    specs.push(spec); sid += 1;
+  }
+  return specs;
+}
+
 // ---- hand-built user fixtures (with ground truth) ----
 
 export function userFixtures() {
@@ -493,6 +538,14 @@ export function userFixtures() {
     fx('smallHigh', [ell(pt(196, 150), 26, 28), ln(pt(196, 178), pt(197, 250)),
       ln(pt(196, 196), pt(158, 232)), ln(pt(197, 196), pt(236, 232)),
       ln(pt(197, 250), pt(172, 312)), ln(pt(197, 250), pt(222, 312))], std),
+    // The reported crotch-as-arm drawing: a big round head, the spine drawn ~30pt to the
+    // right of its centre (so its top reads arm), short arms from the neck, a very long
+    // torso (crotch ≈ 66% of neck→feet) and a tiny hook where the spine meets the legs
+    // (which reads leg). The "half arm / half leg" rule used to make the whole spine an arm.
+    fx('crotchFlick', [ell(pt(200, 200), 85, 85),
+      poly([pt(228, 290), pt(230, 400), pt(231, 520), pt(241, 530), pt(247, 524)]),
+      ln(pt(230, 300), pt(170, 345)), ln(pt(230, 300), pt(290, 345)),
+      ln(pt(231, 522), pt(190, 640)), ln(pt(231, 522), pt(273, 640))], std),
   ];
 }
 
@@ -628,4 +681,49 @@ export function seamStretch(rig, bounds = { width: 390, height: 844 }) {
 
 export function explodedSlots(rig, bounds) {
   return SLOTS.filter((slot) => explosionRatio(rig, slot, bounds) > 2.2);
+}
+
+/// CROTCH FLING (the outcome metric for "hip/crotch ink rides an arm"): every point whose
+/// GROUND-TRUTH stroke is torso or leg and which rests within 0.15 × figure height of the
+/// hip must, through every frame of every routine, keep its distance to the animated hip
+/// within max(10pt, 0.08 × height) of the rest distance. Lean, squash and leg swings all
+/// turn about (or stay near) the hip; only a point riding an ARM — turning about the
+/// shoulder — moves that far. Returns the number of offending STROKES (0 = clean).
+/// Bbox-explosion and label-majority checks both miss this failure (the "line shooting out
+/// of the crotch"), so it is gated on its own.
+export function crotchFling(rig, truth, bounds = { width: 390, height: 844 }, slots = SLOTS) {
+  if (!rig.articulated) return 0;
+  const k = rig.skeleton;
+  const h = Math.max(k.bbox.height, 1);
+  const near = h * 0.15, tol = Math.max(10, h * 0.08);
+  const watch = [];
+  rig.strokes.forEach((s, i) => {
+    const t = truth[i];
+    if (!t) return;
+    const body = t.part ? (t.part === P.torso || t.part === P.leftLeg || t.part === P.rightLeg)
+      : (t.kind === 'legPair' || t.kind === 'spineLeg');
+    if (!body) return;
+    const idx = [];
+    s.points.forEach((p, j) => { if (Math.hypot(p.x - k.hipCenter.x, p.y - k.hipCenter.y) <= near) idx.push(j); });
+    if (idx.length) watch.push({ i, s, idx });
+  });
+  if (!watch.length) return 0;
+  const bad = new Set();
+  for (const slot of slots) {
+    const routine = makeRoutine(slot, makeSetup(rig, bounds, { x: 0, y: 0 }, EXPLOSION_INSETS.top, 44));
+    for (let t = 0; t <= routine.totalDuration; t += 0.25) {
+      const pose = routine.pose(t);
+      const hip = worldPoint(rig, k.hipCenter, P.torso, pose);
+      for (const w of watch) {
+        if (bad.has(w.i)) continue;
+        for (const j of w.idx) {
+          const p = w.s.points[j];
+          const rest = Math.hypot(p.x - k.hipCenter.x, p.y - k.hipCenter.y);
+          const q = worldPoint(rig, p, w.s.parts[j], pose);
+          if (Math.abs(Math.hypot(q.x - hip.x, q.y - hip.y) - rest) > tol) { bad.add(w.i); break; }
+        }
+      }
+    }
+  }
+  return bad.size;
 }
